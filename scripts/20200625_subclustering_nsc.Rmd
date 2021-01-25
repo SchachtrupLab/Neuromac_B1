@@ -1,0 +1,356 @@
+---
+title: "Subclustering NSCs"
+author: "James Choi"
+date: "`r Sys.Date()`"
+output:  
+  html_document:
+    keep_md: true
+    code_folding: hide
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, message = FALSE, warning = FALSE, fig.width=5.5, fig.height=4, fig.align='center', results='hold')
+data_inpath <- '../data/20200511_SVZ.rds'
+cc_genes_path <- '../ref/regev_lab_cell_cycle_genes.txt'
+results_outpath <- '../results/20200625_subclustering_nsc/'
+set.seed(123)
+```
+
+### Background
+
+We build upon the results of the previous cluster analysis of SVZ microglia and NSCs in a photothrombotic injury model of stroke. In this analysis, we take the extract the microglia from the full SVZ dataset and perform an additional round of clustering with the overall goal of uncovering potential subsets of microglia with distinct transcriptional signatures that were not identified in the initial SVZ analysis.  
+
+
+### Loading libraries
+
+```{r load_libraries, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+dir.create(path = results_outpath)
+library('SingleCellExperiment')
+library('Seurat')
+library('dplyr')
+library('ggplot2')
+```
+
+
+### Loading data
+
+Based on marker gene expression (see previous analysis report), clusters 0, 1, 2, and 6 correspond to microglia while clusters 3, 4, and 5 correspond to NSCs.  
+
+
+```{r load_data}
+svz <- readRDS(file = data_inpath)
+DimPlot(svz)
+```
+
+```{r set_identities}
+svz$full_clusters <- svz$RNA_snn_res.0.8
+svz$celltype <- plyr::mapvalues(x = svz$RNA_snn_res.0.8,
+                                from = 0:7,
+                                to = c('Microglia',
+                                       'Microglia',
+                                       'Microglia',
+                                       'NSC',
+                                       'NSC',
+                                       'NSC',
+                                       'Microglia',
+                                       'Unknown'))
+Idents(svz) <- 'celltype'
+DimPlot(svz, label = TRUE, label.size = 6)
+```
+
+We extract the NSCs and perform the standard single-cell clustering procedure as implemented in Seurat.  
+
+```{r extract_nsc}
+nsc <- svz[,svz$celltype == 'NSC']
+DefaultAssay(nsc) <- 'RNA'
+```
+
+
+### Normalization and PCA
+
+```{r normalization}
+nsc <- nsc %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData(vars.to.regress = c('CC.difference')) %>%
+  RunPCA(npcs = 50)
+```
+
+```{r pca_dim_selection, results='hide', fig.height=20, fig.width=14.5}
+elbow <- ElbowPlot(nsc, ndims = 50)
+elbow <- cowplot::plot_grid(NULL, elbow, NULL, rel_widths = c(0.3, 1, 0.3), ncol = 3)
+nsc <- JackStraw(nsc, dims = 30)
+nsc <- ScoreJackStraw(nsc, dims = 1:30)
+jackstraw <- JackStrawPlot(nsc, dims = 1:30)
+jackstraw <- cowplot::plot_grid(NULL, jackstraw, NULL, rel_widths = c(0.3, 1, 0.3), ncol = 3)
+
+npcs <- which(nsc@reductions$pca@jackstraw$overall.p.values[,2] < 1e-5) # This was used for results sent to Suvra
+# npcs <- 1:10
+total_var <- sum(matrixStats::rowVars(x = nsc[['RNA']]@scale.data))
+pc_ev <- nsc[['pca']]@stdev^2
+explained_var <- round(pc_ev/total_var * 100, digits = 1)
+
+color_by <- 'orig.ident'
+tmp <- cbind(nsc[['pca']]@cell.embeddings, nsc@meta.data)
+biplot <- vector(mode = 'list', length = length(npcs))
+for(i in 1:(length(npcs)-1)) {
+  biplot[[i]] <- vector(mode = 'list', length = length(npcs))
+  for(j in (i+1):length(npcs)) {
+    dim_i <- paste0('PC_', npcs[i])
+    dim_j <- paste0('PC_', npcs[j])
+    biplot[[i]][[j]] <- tmp %>%
+      ggplot(mapping = aes_string(y = dim_i, x = dim_j)) +
+      geom_point(mapping = aes_string(color = color_by), size = 1) +
+      geom_hline(yintercept = 0, linetype = 'dashed') +
+      geom_vline(xintercept = 0, linetype = 'dashed') +
+      theme(panel.background = element_rect(fill = NA, color = 'black'),
+            panel.grid = element_blank(),
+            axis.title = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks = element_blank(),
+            legend.position = 'none')
+  }
+  biplot[[i]][[i]] <- cowplot::ggdraw() + cowplot::draw_label(x = 0.5, y = 0.5, paste0(dim_i, '\n', explained_var[npcs[i]]))
+  biplot[[i]] <- cowplot::plot_grid(plotlist = biplot[[i]], ncol = length(biplot[[i]]))
+}
+biplot[[length(npcs)]] <- vector(mode = 'list', length = length(npcs))
+biplot[[length(npcs)]][[length(npcs)]] <- cowplot::ggdraw() + cowplot::draw_label(x = 0.5, y = 0.5, paste0('PC_', npcs[length(npcs)], '\n', explained_var[npcs[length(npcs)]]))
+biplot[[length(npcs)]] <- cowplot::plot_grid(plotlist = biplot[[length(npcs)]], ncol = length(biplot[[length(npcs)]]))
+biplot <- cowplot::plot_grid(plotlist = biplot, ncol = 1)
+tmp <- tmp %>%
+      ggplot(mapping = aes_string(x = dim_i, y = dim_j)) +
+      geom_point(mapping = aes_string(color = color_by), size = 1) +
+  guides(color = guide_legend(title = 'Cluster', override.aes = list(size = 4)))
+tmp_legend <- cowplot::get_legend(tmp)
+biplot <- cowplot::plot_grid(biplot, tmp_legend, rel_widths = c(1, 0.05))
+pca_plots <- cowplot::plot_grid(elbow, jackstraw, biplot, ncol = 1, rel_heights = c(0.5, 0.7, 1.5))
+pca_plots
+# ggsave(filename = paste0(results_outpath, 'PCA_biplot.tiff'), plot = tmp_plots, height = 14, width = 14.5)
+```
+
+```{r vizdimloadings, fig.width=16, fig.height=12}
+VizDimLoadings(nsc, dims = npcs, ncol = round(length(npcs)/2))
+```
+
+
+### Dimensional Reduction and Clustering  
+
+
+```{r compute_knn_k, results='hide', eval=FALSE}
+# distance matrix in PCA-space
+nsc_dist <- dist(x = nsc[['pca']]@cell.embeddings[,npcs])
+
+# Assign values of k.param to iterate
+k_range <- seq(from = 5, to = 35, by = 5) # sqrt(ncol(nsc)) == 25.6907
+names(k_range) <- paste('k', k_range, sep ='_')
+k_results <- vector(mode = 'list', length = length(k_range))
+names(k_results) <- names(k_range)
+
+# Cluster data through k.params using a set louvain resolution
+for(k in 1:length(k_range)) {
+  tmp <- FindNeighbors(object = nsc, k.param = k_range[k], dims = npcs)
+  tmp <- FindClusters(tmp, resolution = 0.8, algorithm = 3)
+  k_results[[names(k_range)[k]]] <- tmp@active.ident
+}
+k_results <- do.call(cbind, k_results)
+
+# Compute silhouette coefficients for clustering results
+silhouette_val <- vector(mode = 'list', length = ncol(k_results))
+names(silhouette_val) <- colnames(k_results)
+for(k in 1:ncol(k_results)) {
+  silhouette_val[[colnames(k_results)[k]]] <- cluster::silhouette(x = k_results[,k], dist = nsc_dist)
+}
+
+# Plot silhouette coefficients
+tiff(filename = paste0(results_outpath, 'SilhouettePlots_kparamTesting.tiff'), height = 2400, width = 2440, res = 220)
+plot_dim <- ceiling(sqrt(length(silhouette_val)))
+{
+  par(mfrow = c(plot_dim, plot_dim))
+  for(k in 1:length(silhouette_val)) {
+    cat(plot(silhouette_val[[k]], border = NA, main = paste(names(silhouette_val)[k], '; res = 0.8'), cex = 1.5))
+  }
+}
+dev.off()
+```
+
+```{r set_knn_k}
+nsc <- FindNeighbors(object = nsc, dims = npcs, k.param = 20)
+```
+
+```{r compute_louvain_resolution, results='hide', eval=FALSE}
+# distance matrix in PCA-space
+nsc_dist <- dist(x = nsc[['pca']]@cell.embeddings[,npcs])
+
+res_range <- seq(from = 0.2, to = 1.0, by = 0.1) # Exclude 0.1 because results in single cluster
+names(res_range) <- paste('res', res_range, sep ='_')
+res_results <- vector(mode = 'list', length = length(res_range))
+names(res_results) <- names(res_range)
+
+# Cluster data through k.params using a set louvain resolution
+for(r in 1:length(res_range)) {
+  tmp <- FindClusters(nsc, resolution = res_range[r])
+  res_results[[names(res_range)[r]]] <- tmp@active.ident
+}
+res_results <- do.call(cbind, res_results)
+
+# Compute silhouette coefficients for clustering results
+silhouette_val <- vector(mode = 'list', length = ncol(res_results))
+names(silhouette_val) <- colnames(res_results)
+for(r in 1:ncol(res_results)) {
+  silhouette_val[[colnames(res_results)[r]]] <- cluster::silhouette(x = res_results[,r], dist = nsc_dist)
+}
+
+# Plot silhouette coefficients
+tiff(filename = paste0(results_outpath, 'SilhouettePlots_resTesting.tiff'), height = 2400, width = 2440, res = 220)
+plot_dim <- ceiling(sqrt(length(silhouette_val)))
+{
+  par(mfrow = c(ceiling(length(res_range)/plot_dim), plot_dim))
+  for(r in 1:length(silhouette_val)) {
+    cat(plot(silhouette_val[[r]], border = NA, main = paste('k.param = 20;', names(silhouette_val)[r]), cex = 1.5))
+  }
+}
+dev.off()
+```
+
+```{r set_graph_resolution, results='hide'}
+nsc <- FindNeighbors(object = nsc, dims = npcs, k.param = 20)
+nsc <- FindClusters(object = nsc, resolution = 0.8)
+```
+
+```{r dimensional_reduction, results='hide', fig.height=4.5, fig.width=16}
+nsc <- RunUMAP(nsc, dims = npcs)
+plot1 <- DimPlot(nsc, group.by = 'orig.ident', reduction = 'umap', pt.size = 2) + 
+  theme(axis.line = element_line(size = 0.5),
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size = 10), 
+        panel.border = element_rect(color = 'black', fill = NA)) +
+  labs(title = 'By time')
+plot2 <- DimPlot(nsc, group.by = 'seurat_clusters', label = TRUE, label.size = 6, reduction = 'umap', pt.size = 2) + 
+  theme(axis.line = element_line(size = 0.5),
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(),
+        axis.title = element_text(size = 10), 
+        panel.border = element_rect(color = 'black', fill = NA)) +
+  labs(title = 'By NSC subcluster')
+plot3 <- DimPlot(nsc, group.by = 'full_clusters', label = TRUE, label.size = 6, reduction = 'umap', pt.size = 2) +
+  theme(axis.line = element_line(size = 0.5),
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(),
+        axis.title = element_text(size = 10), 
+        panel.border = element_rect(color = 'black', fill = NA)) +
+  labs(title = 'By full dataset cluster')
+plot <- cowplot::plot_grid(plot1, plot2, plot3, ncol = 3, rel_widths = c(1,0.925, 0.925))
+plot
+# ggsave(filename = paste0(results_outpath, 'nsc_umap.tiff'), plot = plot, device = 'tiff', height = 4.5, width = 16)
+saveRDS(object = nsc, file = '../data/20200625_nsc.rds')
+```
+
+--------------------------------------------------------------------------------
+
+### NSC sub-cluster DE genes
+
+```{r graph_DE_markers, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+nsc_markers <- FindAllMarkers(object = nsc, assay = 'RNA', slot = 'data', test.use = 'wilcox', only.pos = TRUE)
+saveRDS(object = nsc_markers, file = paste0(results_outpath, 'nsc_de_markers.rds'))
+write.csv(file = paste0(results_outpath, 'nsc_de_markers.csv'), x = nsc_markers[nsc_markers$p_val_adj < 0.001,], quote = FALSE)
+```
+
+```{r cluster_markers_table, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+markers <- readRDS(file = paste0(results_outpath, 'nsc_de_markers.rds'))
+markers <- markers[markers$p_val_adj < 0.001, c(6,7,2,5,1,3,4)]
+markers[c('p_val_adj','avg_logFC','p_val','pct.1','pct.2')] <- signif(markers[c('p_val_adj','avg_logFC','p_val','pct.1','pct.2')]
+, digits = 3)
+DT::datatable(data = markers, rownames = FALSE, extensions = c('Scroller','Buttons'), options = list(scroller = TRUE, deferRender = TRUE, scrollY = 350, fixedColumns = TRUE, autoWidth = TRUE, pageLength = 10, dom = 'Bfrtip', buttons = list(extend = 'collection', buttons = c('csv', 'excel', 'pdf'))))
+```
+
+
+### Cluster Dendrograms
+
+```{r dendrogram_subcluster, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, fig.align='center', fig.width=4, fig.height=4}
+Idents(nsc) <- 'seurat_clusters' 
+avg <- AverageExpression(object = nsc, assays = 'RNA', slot = 'scale.data')[[1]]
+nsc.dist <- dist(x = t(avg))
+nsc.tree <- hclust(d = nsc.dist, method = 'ward.D2')
+nsc.dend <- dendsort::dendsort(as.dendrogram(nsc.tree, hang = 0.1))
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+nsc.cols <- gg_color_hue(n = length(levels(nsc$seurat_clusters)))
+dendextend::labels_colors(nsc.dend) <- nsc.cols[nsc.tree$labels][order.dendrogram(nsc.dend)]
+dendextend::labels_colors(nsc.dend) <- nsc.cols
+dendextend::labels_cex(nsc.dend) <- 0.75
+tiff(filename = paste0(results_outpath, 'Cluster_dendrogram.tiff'), height = 630, width = 630)
+{par(mar = c(2,2,2,2), cex = 3, lwd = 2); dendextend::plot_horiz.dendrogram(nsc.dend, side = FALSE, main = 'Cluster dendrogram')}
+dev.off()
+{par(mar = c(2,2,2,2), cex = 2, lwd = 2, cex.main = 1); dendextend::plot_horiz.dendrogram(nsc.dend, side = FALSE, main = 'Cluster dendrogram')}
+rm(avg, nsc.dist, nsc.tree, nsc.dend)
+```
+
+
+```{r nsc_population_dynamics, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, fig.align='center', fig.width=8, fig.height=3.75}
+counts <- data.frame(table(nsc$seurat_clusters, nsc$orig.ident))
+names(counts) <- c('seurat_clusters','orig.ident','count')
+numbers <- counts %>%
+  ggplot(mapping = aes(x = orig.ident, y = count, group = seurat_clusters)) + 
+  geom_bar(aes(fill = seurat_clusters), stat = 'identity', color = 'black', size = 0.75) +
+  scale_y_continuous() +
+  scale_x_discrete() + 
+  ylab('# of cells') + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 12), 
+        axis.text.x = element_text(size = 12), 
+        axis.line = element_line(size = 1),
+        panel.background = element_rect(fill = NA),
+        axis.text.y = element_text(size = 12))
+props <- counts %>% 
+  ggplot(mapping = aes(x = orig.ident, y = count, group = seurat_clusters)) + 
+  geom_bar(aes(fill = seurat_clusters), stat = 'identity', color = 'black', size = 0.75, position = 'fill') +
+  scale_y_continuous() + 
+  scale_x_discrete() +
+  ylab('% of cells') + 
+  theme(axis.title.x = element_blank(), 
+        axis.title.y = element_text(size = 12), 
+        axis.text.x = element_text(size = 12),
+        axis.line = element_line(size = 1), 
+        panel.background = element_rect(fill = NA), 
+        axis.text.y = element_text(size = 12), 
+        legend.title = element_blank(), 
+        legend.text = element_text(size = 12))
+legend <- cowplot::get_legend(plot = props)
+pop.dynamics <- cowplot::plot_grid(numbers + theme(legend.position = 'none'), props + theme(legend.position = 'none'), legend, ncol = 3, rel_widths = c(1, 1, 0.25))
+
+pop.dynamics
+ggsave(filename = paste0(results_outpath, 'nsc_population_dynamics.tiff'), plot = pop.dynamics, device = 'tiff', height = 3.75, width = 8)
+```
+
+
+
+```{r hclust, fig.height=8, fig.width=10, eval=FALSE}
+tmp <- FetchData(object = nsc, vars = c('seurat_clusters', 'orig.ident', VariableFeatures(nsc)), slot = 'scale.data')
+tmp_annotation <- tmp[c('seurat_clusters', 'orig.ident')]
+tmp_dat <- tmp[sapply(tmp, is.numeric)]
+pheatmap::pheatmap(tmp_dat)
+nsc.dist <- dist(x = tmp_dat)
+nsc.tree <- hclust(d = nsc.dist, method = 'ward.D2')
+nsc.dend <- dendsort::dendsort(as.dendrogram(nsc.tree, hang = 0.1))
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+tmp_order <- order.dendrogram(nsc.dend)
+nsc.cols <- gg_color_hue(n = length(levels(nsc$seurat_clusters)))
+tmp_clust <- plyr::mapvalues(x = rownames(tmp_annotation)[tmp_order],
+                             from = rownames(tmp_annotation)[tmp_order],
+                             to = as.character(tmp_annotation$seurat_clusters[tmp_order]))
+dendextend::labels_colors(nsc.dend) <- nsc.cols[tmp_clust]
+dendextend::labels_colors(nsc.dend) <- nsc.cols
+dendextend::labels_cex(nsc.dend) <- 0.75
+plot(nsc.tree)
+```
+
+```{r sessionInfo}
+sessionInfo()
+```

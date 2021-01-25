@@ -1,0 +1,353 @@
+---
+title: "Subclustering Microglia"
+author: "James Choi"
+date: "`r Sys.Date()`"
+output:  
+  html_document:
+    keep_md: true
+    code_folding: hide
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, message = FALSE, warning = FALSE, fig.width=5.5, fig.height=4, fig.align='center', results='hold')
+data_inpath <- '../data/20200511_SVZ.rds'
+cc_genes_path <- '../ref/regev_lab_cell_cycle_genes.txt'
+results_outpath <- '../results/20200625_subclustering_microglia/'
+set.seed(123)
+```
+
+### Background
+
+We build upon the results of the previous cluster analysis of SVZ microglia and NSCs in a photothrombotic injury model of stroke. In this analysis, we take the extract the microglia from the full SVZ dataset and perform an additional round of clustering with the overall goal of uncovering potential subsets of microglia with distinct transcriptional signatures that were not identified in the initial SVZ analysis.  
+
+
+### Loading libraries
+
+```{r load_libraries, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+dir.create(path = results_outpath)
+library('SingleCellExperiment')
+library('Seurat')
+library('dplyr')
+library('ggplot2')
+```
+
+
+### Loading data
+
+Based on marker gene expression (see previous analysis report), clusters 0, 1, 2, and 6 correspond to microglia while clusters 3, 4, and 5 correspond to NSCs.  
+
+
+```{r load_data}
+svz <- readRDS(file = data_inpath)
+DimPlot(svz)
+```
+
+```{r set_identities}
+svz$full_clusters <- svz$RNA_snn_res.0.8
+svz$celltype <- plyr::mapvalues(x = svz$RNA_snn_res.0.8,
+                                from = 0:7,
+                                to = c('Microglia',
+                                       'Microglia',
+                                       'Microglia',
+                                       'NSC',
+                                       'NSC',
+                                       'NSC',
+                                       'Microglia',
+                                       'Unknown'))
+Idents(svz) <- 'celltype'
+DimPlot(svz, label = TRUE, label.size = 6)
+```
+
+We extract the microglia and perform the standard single-cell clustering procedure as implemented in Seurat.  
+
+```{r extract_microglia}
+microglia <- svz[,svz$celltype == 'Microglia']
+DefaultAssay(microglia) <- 'RNA'
+```
+
+
+### Normalization and PCA
+
+```{r normalization}
+microglia <- microglia %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData(vars.to.regress = c('CC.difference')) %>%
+  RunPCA(npcs = 50)
+```
+
+```{r pca_dim_selection, results='hide', fig.height=20, fig.width=14.5}
+elbow <- ElbowPlot(microglia, ndims = 50)
+elbow <- cowplot::plot_grid(NULL, elbow, NULL, rel_widths = c(0.3, 1, 0.3), ncol = 3)
+microglia <- JackStraw(microglia, dims = 30)
+microglia <- ScoreJackStraw(microglia, dims = 1:30)
+jackstraw <- JackStrawPlot(microglia, dims = 1:30)
+jackstraw <- cowplot::plot_grid(NULL, jackstraw, NULL, rel_widths = c(0.3, 1, 0.3), ncol = 3)
+
+# npcs <- which(microglia@reductions$pca@jackstraw$overall.p.values[,2] < 1e-5) 
+npcs <- 1:10 # This was used for results sent to Suvra
+total_var <- sum(matrixStats::rowVars(x = microglia[['RNA']]@scale.data))
+pc_ev <- microglia[['pca']]@stdev^2
+explained_var <- round(pc_ev/total_var * 100, digits = 1)
+
+color_by <- 'orig.ident'
+tmp <- cbind(microglia[['pca']]@cell.embeddings, microglia@meta.data)
+biplot <- vector(mode = 'list', length = length(npcs))
+for(i in 1:(length(npcs)-1)) {
+  biplot[[i]] <- vector(mode = 'list', length = length(npcs))
+  for(j in (i+1):length(npcs)) {
+    dim_i <- paste0('PC_', npcs[i])
+    dim_j <- paste0('PC_', npcs[j])
+    biplot[[i]][[j]] <- tmp %>%
+      ggplot(mapping = aes_string(y = dim_i, x = dim_j)) +
+      geom_point(mapping = aes_string(color = color_by), size = 1) +
+      geom_hline(yintercept = 0, linetype = 'dashed') +
+      geom_vline(xintercept = 0, linetype = 'dashed') +
+      theme(panel.background = element_rect(fill = NA, color = 'black'),
+            panel.grid = element_blank(),
+            axis.title = element_blank(),
+            axis.text = element_blank(),
+            axis.ticks = element_blank(),
+            legend.position = 'none')
+  }
+  biplot[[i]][[i]] <- cowplot::ggdraw() + cowplot::draw_label(x = 0.5, y = 0.5, paste0(dim_i, '\n', explained_var[npcs[i]]))
+  biplot[[i]] <- cowplot::plot_grid(plotlist = biplot[[i]], ncol = length(biplot[[i]]))
+}
+biplot[[length(npcs)]] <- vector(mode = 'list', length = length(npcs))
+biplot[[length(npcs)]][[length(npcs)]] <- cowplot::ggdraw() + cowplot::draw_label(x = 0.5, y = 0.5, paste0('PC_', npcs[length(npcs)], '\n', explained_var[npcs[length(npcs)]]))
+biplot[[length(npcs)]] <- cowplot::plot_grid(plotlist = biplot[[length(npcs)]], ncol = length(biplot[[length(npcs)]]))
+biplot <- cowplot::plot_grid(plotlist = biplot, ncol = 1)
+tmp <- tmp %>%
+      ggplot(mapping = aes_string(x = dim_i, y = dim_j)) +
+      geom_point(mapping = aes_string(color = color_by), size = 1) +
+  guides(color = guide_legend(title = 'Cluster', override.aes = list(size = 4)))
+tmp_legend <- cowplot::get_legend(tmp)
+biplot <- cowplot::plot_grid(biplot, tmp_legend, rel_widths = c(1, 0.05))
+pca_plots <- cowplot::plot_grid(elbow, jackstraw, biplot, ncol = 1, rel_heights = c(0.5, 0.7, 1.5))
+pca_plots
+# ggsave(filename = paste0(results_outpath, 'PCA_biplot.tiff'), plot = tmp_plots, height = 14, width = 14.5)
+```
+
+```{r vizdimloadings, fig.width=16, fig.height=12}
+VizDimLoadings(microglia, dims = npcs, ncol = round(length(npcs)/2))
+```
+
+
+### Dimensional Reduction and Clustering  
+
+
+```{r compute_knn_k, results='hide', eval=FALSE}
+# distance matrix in PCA-space
+microglia_dist <- dist(x = microglia[['pca']]@cell.embeddings[,npcs])
+
+# Assign values of k.param to iterate
+k_range <- seq(from = 5, to = 35, by = 5) # sqrt(ncol(microglia)) == 25.6907
+names(k_range) <- paste('k', k_range, sep ='_')
+k_results <- vector(mode = 'list', length = length(k_range))
+names(k_results) <- names(k_range)
+
+# Cluster data through k.params using a set louvain resolution
+for(k in 1:length(k_range)) {
+  tmp <- FindNeighbors(object = microglia, k.param = k_range[k], dims = npcs)
+  tmp <- FindClusters(tmp, resolution = 0.8, algorithm = 3)
+  k_results[[names(k_range)[k]]] <- tmp@active.ident
+}
+k_results <- do.call(cbind, k_results)
+
+# Compute silhouette coefficients for clustering results
+silhouette_val <- vector(mode = 'list', length = ncol(k_results))
+names(silhouette_val) <- colnames(k_results)
+for(k in 1:ncol(k_results)) {
+  silhouette_val[[colnames(k_results)[k]]] <- cluster::silhouette(x = k_results[,k], dist = microglia_dist)
+}
+
+# Plot silhouette coefficients
+tiff(filename = paste0(results_outpath, 'SilhouettePlots_kparamTesting.tiff'), height = 2400, width = 2440, res = 220)
+plot_dim <- ceiling(sqrt(length(silhouette_val)))
+{
+  par(mfrow = c(plot_dim, plot_dim))
+  for(k in 1:length(silhouette_val)) {
+    cat(plot(silhouette_val[[k]], border = NA, main = paste(names(silhouette_val)[k], '; res = 0.8'), cex = 1.5))
+  }
+}
+dev.off()
+```
+
+```{r set_knn_k}
+microglia <- FindNeighbors(object = microglia, dims = npcs, k.param = 20)
+```
+
+```{r compute_louvain_resolution, results='hide', eval=FALSE}
+# distance matrix in PCA-space
+microglia_dist <- dist(x = microglia[['pca']]@cell.embeddings[,npcs])
+
+res_range <- seq(from = 0.2, to = 1.0, by = 0.1) # Exclude 0.1 because results in single cluster
+names(res_range) <- paste('res', res_range, sep ='_')
+res_results <- vector(mode = 'list', length = length(res_range))
+names(res_results) <- names(res_range)
+
+# Cluster data through k.params using a set louvain resolution
+for(r in 1:length(res_range)) {
+  tmp <- FindClusters(microglia, resolution = res_range[r])
+  res_results[[names(res_range)[r]]] <- tmp@active.ident
+}
+res_results <- do.call(cbind, res_results)
+
+# Compute silhouette coefficients for clustering results
+silhouette_val <- vector(mode = 'list', length = ncol(res_results))
+names(silhouette_val) <- colnames(res_results)
+for(r in 1:ncol(res_results)) {
+  silhouette_val[[colnames(res_results)[r]]] <- cluster::silhouette(x = res_results[,r], dist = microglia_dist)
+}
+
+# Plot silhouette coefficients
+tiff(filename = paste0(results_outpath, 'SilhouettePlots_resTesting.tiff'), height = 2400, width = 2440, res = 220)
+plot_dim <- ceiling(sqrt(length(silhouette_val)))
+{
+  par(mfrow = c(ceiling(length(res_range)/plot_dim), plot_dim))
+  for(r in 1:length(silhouette_val)) {
+    cat(plot(silhouette_val[[r]], border = NA, main = paste('k.param = 20;', names(silhouette_val)[r]), cex = 1.5))
+  }
+}
+dev.off()
+```
+
+```{r set_graph_resolution, results='hide'}
+microglia <- FindNeighbors(object = microglia, dims = npcs, k.param = 20)
+microglia <- FindClusters(object = microglia, resolution = 0.8)
+```
+
+```{r dimensional_reduction, results='hide', fig.height=4.5, fig.width=16}
+microglia <- RunUMAP(microglia, dims = npcs)
+plot1 <- DimPlot(microglia, group.by = 'orig.ident', reduction = 'umap', pt.size = 2) + 
+  theme(axis.line = element_line(size = 0.5),
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(), 
+        axis.title = element_text(size = 10), 
+        panel.border = element_rect(color = 'black', fill = NA)) +
+  labs(title = 'By time')
+plot2 <- DimPlot(microglia, group.by = 'seurat_clusters', label = TRUE, label.size = 6, reduction = 'umap', pt.size = 2) + 
+  theme(axis.line = element_line(size = 0.5),
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(),
+        axis.title = element_text(size = 10), 
+        panel.border = element_rect(color = 'black', fill = NA)) +
+  labs(title = 'By microglial subcluster')
+plot3 <- DimPlot(microglia, group.by = 'full_clusters', label = TRUE, label.size = 6, reduction = 'umap', pt.size = 2) +
+  theme(axis.line = element_line(size = 0.5),
+        axis.ticks = element_blank(), 
+        axis.text = element_blank(),
+        axis.title = element_text(size = 10), 
+        panel.border = element_rect(color = 'black', fill = NA)) +
+  labs(title = 'By full dataset cluster')
+plot <- cowplot::plot_grid(plot1, plot2, plot3, ncol = 3, rel_widths = c(1,0.925, 0.925))
+plot
+# ggsave(filename = paste0(results_outpath, 'microglia_umap.tiff'), plot = plot, device = 'tiff', height = 4.5, width = 16)
+saveRDS(object = microglia, file = '../data/20200625_microglia.rds')
+```
+
+--------------------------------------------------------------------------------
+
+### Microglia sub-cluster DE genes
+
+```{r graph_DE_markers, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+microglia_markers <- FindAllMarkers(object = microglia, assay = 'RNA', slot = 'data', test.use = 'wilcox', only.pos = TRUE)
+saveRDS(object = microglia_markers, file = paste0(results_outpath, 'microglia_de_markers.rds'))
+write.csv(file = paste0(results_outpath, 'microglia_de_markers.csv'), x = microglia_markers[microglia_markers$p_val_adj < 0.001,], quote = FALSE)
+```
+
+```{r cluster_markers_table, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+markers <- readRDS(file = paste0(results_outpath, 'microglia_de_markers.rds'))
+markers <- markers[markers$p_val_adj < 0.001, c(6,7,2,5,1,3,4)]
+markers[c('p_val_adj','avg_logFC','p_val','pct.1','pct.2')] <- signif(markers[c('p_val_adj','avg_logFC','p_val','pct.1','pct.2')]
+, digits = 3)
+DT::datatable(data = markers, rownames = FALSE, extensions = c('Scroller','Buttons'), options = list(scroller = TRUE, deferRender = TRUE, scrollY = 350, fixedColumns = TRUE, autoWidth = TRUE, pageLength = 10, dom = 'Bfrtip', buttons = list(extend = 'collection', buttons = c('csv', 'excel', 'pdf'))))
+```
+
+
+### Cluster Dendrograms
+
+```{r dendrogram_subcluster, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, fig.align='center', fig.width=4, fig.height=4}
+Idents(microglia) <- 'seurat_clusters' 
+avg <- AverageExpression(object = microglia, assays = 'RNA', slot = 'scale.data')[[1]]
+microglia.dist <- dist(x = t(avg))
+microglia.tree <- hclust(d = microglia.dist, method = 'ward.D2')
+microglia.dend <- dendsort::dendsort(as.dendrogram(microglia.tree, hang = 0.1))
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+microglia.cols <- gg_color_hue(n = length(levels(microglia$seurat_clusters)))
+dendextend::labels_colors(microglia.dend) <- microglia.cols[microglia.tree$labels][order.dendrogram(microglia.dend)]
+dendextend::labels_colors(microglia.dend) <- microglia.cols
+dendextend::labels_cex(microglia.dend) <- 0.75
+tiff(filename = paste0(results_outpath, 'Cluster_dendrogram.tiff'), height = 630, width = 630)
+{par(mar = c(2,2,2,2), cex = 3, lwd = 2); dendextend::plot_horiz.dendrogram(microglia.dend, side = FALSE, main = 'Cluster dendrogram')}
+dev.off()
+{par(mar = c(2,2,2,2), cex = 2, lwd = 2, cex.main = 1); dendextend::plot_horiz.dendrogram(microglia.dend, side = FALSE, main = 'Cluster dendrogram')}
+rm(avg, microglia.dist, microglia.tree, microglia.dend)
+```
+
+```{r microglia_population_dynamics, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, fig.align='center', fig.width=8, fig.height=3.75}
+counts <- data.frame(table(microglia$seurat_clusters, microglia$orig.ident))
+names(counts) <- c('seurat_clusters','orig.ident','count')
+numbers <- counts %>%
+  ggplot(mapping = aes(x = orig.ident, y = count, group = seurat_clusters)) + 
+  geom_bar(aes(fill = seurat_clusters), stat = 'identity', color = 'black', size = 0.75) +
+  scale_y_continuous() +
+  scale_x_discrete() + 
+  ylab('# of cells') + 
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 12), 
+        axis.text.x = element_text(size = 12), 
+        axis.line = element_line(size = 1),
+        panel.background = element_rect(fill = NA),
+        axis.text.y = element_text(size = 12))
+props <- counts %>% 
+  ggplot(mapping = aes(x = orig.ident, y = count, group = seurat_clusters)) + 
+  geom_bar(aes(fill = seurat_clusters), stat = 'identity', color = 'black', size = 0.75, position = 'fill') +
+  scale_y_continuous() + 
+  scale_x_discrete() +
+  ylab('% of cells') + 
+  theme(axis.title.x = element_blank(), 
+        axis.title.y = element_text(size = 12), 
+        axis.text.x = element_text(size = 12),
+        axis.line = element_line(size = 1), 
+        panel.background = element_rect(fill = NA), 
+        axis.text.y = element_text(size = 12), 
+        legend.title = element_blank(), 
+        legend.text = element_text(size = 12))
+legend <- cowplot::get_legend(plot = props)
+pop.dynamics <- cowplot::plot_grid(numbers + theme(legend.position = 'none'), props + theme(legend.position = 'none'), legend, ncol = 3, rel_widths = c(1, 1, 0.25))
+
+pop.dynamics
+ggsave(filename = paste0(results_outpath, 'microglia_population_dynamics.tiff'), plot = pop.dynamics, device = 'tiff', height = 3.75, width = 8)
+```
+
+```{r hclust, fig.height=8, fig.width=10, eval=FALSE}
+tmp <- FetchData(object = microglia, vars = c('seurat_clusters', 'orig.ident', VariableFeatures(microglia)), slot = 'scale.data')
+tmp_annotation <- tmp[c('seurat_clusters', 'orig.ident')]
+tmp_dat <- tmp[sapply(tmp, is.numeric)]
+pheatmap::pheatmap(tmp_dat)
+microglia.dist <- dist(x = tmp_dat)
+microglia.tree <- hclust(d = microglia.dist, method = 'ward.D2')
+microglia.dend <- dendsort::dendsort(as.dendrogram(microglia.tree, hang = 0.1))
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+tmp_order <- order.dendrogram(microglia.dend)
+microglia.cols <- gg_color_hue(n = length(levels(microglia$seurat_clusters)))
+tmp_clust <- plyr::mapvalues(x = rownames(tmp_annotation)[tmp_order],
+                             from = rownames(tmp_annotation)[tmp_order],
+                             to = as.character(tmp_annotation$seurat_clusters[tmp_order]))
+dendextend::labels_colors(microglia.dend) <- microglia.cols[tmp_clust]
+dendextend::labels_colors(microglia.dend) <- microglia.cols
+dendextend::labels_cex(microglia.dend) <- 0.75
+plot(microglia.tree)
+```
+
+```{r sessionInfo}
+sessionInfo()
+```

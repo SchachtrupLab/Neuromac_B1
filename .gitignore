@@ -1,0 +1,17 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+results/*
+data/*
+ref/*
+tutorial/*
+*.png
+*.tiff
+*.svg
+*.pdf
+*.pptx
+*.docx
+*.csv
+*.txt
+*.rds
