@@ -106,6 +106,9 @@ subtype_results$split_by <- factor(subtype_results$split_by,
                                     levels = c('SCtrl','S1d','S7d'))
 
 # # Visual some of the pathways highlighted by Suvra:
+# 
+# Please note that these pairs has been ordered.
+# 
 # -B2m-TFrc
 # -C1qa-Cr1l
 # -Apoe-Lrp8
@@ -125,8 +128,8 @@ celltype_plot <- plotLR(
 celltype_plot
 ggsave(filename = paste0(results_out, 'celltype_selectPairs_LRplot.tiff'),
        plot = celltype_plot, device = 'tiff', height = 4.25, width = 7.5)
-ggsave(filename = paste0(results_out, 'celltype_selectPairs_LRplot.svg'),
-       plot = celltype_plot, device = 'svg', height = 4.25, width = 7.5)
+# ggsave(filename = paste0(results_out, 'celltype_selectPairs_LRplot.svg'),
+#        plot = celltype_plot, device = 'svg', height = 4.25, width = 7.5)
 
 
 subtype_plot <- plotLR(
@@ -138,5 +141,43 @@ subtype_plot <- plotLR(
 subtype_plot
 ggsave(filename = paste0(results_out, 'subtype_selectPairs_LRplot.tiff'),
        plot = subtype_plot, device = 'tiff', height = 21, width = 8)
-ggsave(filename = paste0(results_out, 'subtype_selectPairs_LRplot.svg'),
-       plot = subtype_plot, device = 'svg', height = 21, width = 8)
+# ggsave(filename = paste0(results_out, 'subtype_selectPairs_LRplot.svg'),
+#        plot = subtype_plot, device = 'svg', height = 21, width = 8)
+
+
+# Extended List contains:
+# -Ccl3-Ccr4
+# -Lpl-Vldlr
+# -Tnf-Traf2
+# -Lpl-Cd44
+# -Vegfb-Tyro3
+# -Tgfb1-Cxcr4
+# -Igf2-Insr
+# -Sema4d-Plxnb1
+
+celltype_plot <- plotLR(
+  results = celltype_results,
+  ligands = c('Ccl3','Lpl','Tnf','Vegfb','Tgfb1','Igf2','Sema4d'),
+  receptors = c('Ccr4','Vldlr','Traf2','Cd44','Tyro3','Cxcr4','Insr','Plxnb1'),
+  l_cells = c('Microglia','NSC'),
+  r_cells = c('Microglia','NSC'),
+  resample = 10000
+)
+celltype_plot
+ggsave(filename = paste0(results_out, 'celltype_addtlPairs_LRplot.tiff'),
+       plot = celltype_plot, device = 'tiff', height = 4.25, width = 7.5)
+# ggsave(filename = paste0(results_out, 'celltype_addtlPairs_LRplot.svg'),
+#        plot = celltype_plot, device = 'svg', height = 4.25, width = 7.5)
+
+
+subtype_plot <- plotLR(
+  results = svz_results,
+  ligands = c('Ccl3','Lpl','Tnf','Vegfb','Tgfb1','Igf2','Sema4d'),
+  receptors = c('Ccr4','Vldlr','Traf2','Cd44','Tyro3','Cxcr4','Insr','Plxnb1'),
+  resample = 10000
+)
+subtype_plot
+ggsave(filename = paste0(results_out, 'subtype_addtlPairs_LRplot.tiff'),
+       plot = subtype_plot, device = 'tiff', height = 21, width = 8)
+# ggsave(filename = paste0(results_out, 'subtype_addtlPairs_LRplot.svg'),
+#        plot = subtype_plot, device = 'svg', height = 21, width = 8)
