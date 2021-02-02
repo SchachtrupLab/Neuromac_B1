@@ -2,7 +2,7 @@
 #' ---
 #' title: "SVZ scRNAseq preprocessing"
 #' author: "James Choi"
-#' date: "`r Sys.Date()`"
+#' date: "Last run: `r Sys.Date()`"
 #' output: pdf_document
 #' ---
 
@@ -42,13 +42,18 @@ svz <- CreateSeuratObject(counts = svz, project = 'SVZ', assay = 'RNA')
 #+ detection_scatter, fig.height=4, fig.width=4.5, fig.cap='Scatter plot of sequencing metrics by cell.'
 qc <- svz@meta.data
 qc <- qc[sample(x = nrow(qc), size = nrow(qc)),]
-plot(x = qc$nCount_RNA,
-     y = qc$nFeature_RNA,
-     xlab = 'total UMI',
-     ylab = '# genes detected',
-     main = 'Detection rates by sample',
-     sub = 'Black = SCtrl; Red = S1d; Green = S7d',
-     col = sapply(X = as.character(qc$orig.ident), FUN = function(x) switch(x, 'SCtrl' = 'black', 'S1d' = 'red3', 'S7d' = 'green')))
+plot(
+  x = qc$nCount_RNA,
+  y = qc$nFeature_RNA,
+  xlab = 'total UMI',
+  ylab = '# genes detected',
+  main = 'Detection rates by sample',
+  sub = 'Black = SCtrl; Red = S1d; Green = S7d',
+  col = sapply(
+    X = as.character(qc$orig.ident),
+    FUN = function(x) switch(x, 'SCtrl'='black','S1d'='red3','S7d'='green')
+  )
+)
 
 
 #' From the above, we see that there are a few cells with outlier numbers of 
@@ -88,80 +93,40 @@ qc_plot
 #' collectively should be considered suspect and removed from downstream.  
 
 umi_lo_threshold <- 1000
-# umi_hi_threshold <- median(svz$log10_total_counts) + 2.6*mad(svz$log10_total_counts, constant = 1)
-feat_hi_threshold <- 6000
-# log_umi_hi_threshold <- median(svz$log10_total_counts) + 3*mad(x = svz$log10_total_counts, constant = 1)
+feat_hi_threshold <- 6000 # removes 2 cells
 percent_mt_threshold <- 25
 
 bad_cells <- svz$nCount_RNA < umi_lo_threshold | 
-  # svz$log10_total_counts > log_umi_hi_threshold | 
   svz$nFeature_RNA > feat_hi_threshold |
   svz$percent.mt > percent_mt_threshold
 table(bad_cells)
 svz$outlier <- bad_cells
+
+#' Re-examine the disitrbution of cells colored by whether considered outlier:  
+meta_vars <- c('orig.ident','outlier','nFeature_RNA','nCount_RNA', 'percent.mt')
+qc_plot <- svz@meta.data[meta_vars] %>%
+  reshape2::melt(id.vars = c('orig.ident','outlier')) %>%
+  ggplot(mapping = aes(x = orig.ident, y = value)) +
+  geom_violin(scale = 'width') +
+  ggbeeswarm::geom_quasirandom(mapping = aes(color = ifelse(outlier, 'True','False')), size = 0.35) +
+  scale_color_manual(values = c('True' = 'red', 'False' = 'black')) +
+  facet_wrap(. ~ variable, scales = 'free_y') +
+  labs(title = 'Quality control metrics') +
+  theme(axis.title = element_blank(),
+        plot.title = element_text(size = 18, face = 'bold'),
+        axis.line.y = element_line(size = 1),
+        axis.ticks.y = element_line(size = 1),
+        legend.key = element_rect(fill = NA),
+        legend.position = 'bottom') +
+  guides(color = guide_legend(title = 'Is outlier?'))
+qc_plot
+
+#' Filter the cells:  
+table('High quality cells:' = !svz$outlier,
+      'Injury time-point:' = svz$orig.ident)
+
+#' Number of high-quality cells: `r sum(!svz$outlier)`
 svz <- svz[,!svz$outlier]
+saveRDS(object = svz, file = '../data/20210202_SVZ.rds')
 
-
-#+ variable_features, fig.height=2.5, figh.width=4.5
-firstup <- function(x) {
-  x <- tolower(x)
-  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
-  return(x)
-}
-DefaultAssay(svz) <- 'RNA'
-summary(svz$nFeature_RNA)
-svz <- NormalizeData(svz, verbose = FALSE)
-svz <- CellCycleScoring(
-  object = svz,
-  s.features = intersect(firstup(cc.genes$s.genes), rownames(svz)),
-  g2m.features = intersect(firstup(cc.genes$g2m.genes), rownames(svz))
-)
-svz$CC.difference <- svz$S.Score - svz$G2M.Score
-svz <- SCTransform(svz, 
-                   assay = 'RNA', 
-                   variable.features.n = 2000, 
-                   vars.to.regress = 'CC.difference', 
-                   verbose = FALSE)
-# VariableFeaturePlot(svz) + theme_bw()
-
-#+ pca_elbow, fig.height=2.5, fig.width=4
-svz <- RunPCA(svz, npcs = 40, verbose = FALSE)
-# ElbowPlot(svz, ndims = 40) + theme_bw()
-
-#+ pca_iteration, fig.height=6, fig.width=15, fig.cap="UMAPs using varying number of PCs"
-# test_pcs <- 10:19
-# umaps <- vector(mode = "list", length = length(test_pcs))
-# for (i in 1:length(test_pcs)) {
-#   svz <- FindNeighbors(svz, dims = 1:test_pcs[i], verbose = FALSE)
-#   svz <- FindClusters(svz, resolution = 1.5, verbose = FALSE)
-#   svz <- RunUMAP(svz, dims = 1:test_pcs[i], verbose = FALSE)
-#   umaps[[i]] <- DimPlot(svz, pt.size = 1, label = TRUE, label.size = 6) +
-#     theme_bw() + labs(title = paste("# PCs:", test_pcs[i]))
-# }
-# umaps <- cowplot::plot_grid(plotlist = umaps, ncol = length(test_pcs)/2)
-# umaps
-
-#' UMAPs with varying number of PCs and high resolution shows that the small
-#' group of cells successfully clusters out using lower number of PCs (10-12). 
-#' To better choose PCs, we look at gene loadings for each component:  
-#' 
-
-#+ dimloadings, fig.height=4, fig.width=8
-# VizDimLoadings(svz, dims = 9:12, nfeatures = 30, ncol = 4)
-
-#' We also inspect the distrbution of cells along thesse components:  
-#' 
-# DimPlot(svz, pt.size = 2, reduction = 'pca', dims = c(10,11))
-# DimPlot(svz, pt.size = 2, reduction = 'pca', dims = c(10,12))
-# DimPlot(svz, pt.size = 2, reduction = 'pca', dims = c(11,12))
-
-#' Seems that up to PC 11 has good distribution of cells, whereas PC 12 has a
-#' weird skewed distribution.  
-#' 
-
-
-#+ svz_umap, fig.height=3, fig.width=4
-svz <- FindNeighbors(svz, dims = 1:11, verbose = FALSE)
-svz <- RunUMAP(svz, dims = 1:11, verbose = FALSE)
-svz <- FindClusters(svz, resolution = 2, verbose = FALSE)
-DimPlot(svz, pt.size = 2, label = TRUE, label.size = 6) + theme_bw()
+sessionInfo()
