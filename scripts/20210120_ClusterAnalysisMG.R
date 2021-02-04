@@ -16,7 +16,9 @@ require('dplyr')
 require('dendextend')
 
 setwd('./scripts')
-svz <- readRDS(file = '../data/20210108_SVZ.rds')
+results_out <- '../results/ClusterAnalysisMG/'
+dir.create(path =)
+svz <- readRDS(file = '../data/20210202_SVZ.rds')
 
 #' ## Cluster Analysis of Microglia
 # subset microglia
@@ -121,7 +123,7 @@ DimPlot(mg, pt.size = 2, split.by = 'orig.ident') +
 
 #' Identify marker genes:  
 #' 
-
+ensembl_conversion <- read.table(file = '../')
 Idents(mg) <- 'SCT_snn_res.0.4'
 markers <- FindAllMarkers(
   object = mg,
@@ -136,6 +138,28 @@ top_markers$p_val <- as.character(signif(top_markers$p_val, digits = 3))
 top_markers$p_val_adj <- as.character(signif(top_markers$p_val_adj, digits = 3))
 knitr::kable(x = top_markers, digits = 3)
 table("# of DE genes by cluster" = markers$cluster[markers$p_val_adj < 1e-03])
+
+# Convert gene-names to Ensembl IDs
+ensembl <- useEnsembl(biomart = 'ENSEMBL_MART_ENSEMBL', 
+                      dataset = 'mmusculus_gene_ensembl')
+conversion_input <- rownames(mg[['RNA']]@counts)
+conversion_input <- plyr::mapvalues(conversion_input, 'Sepp1', 'Selenop')
+markers$gene <- plyr::mapvalues(markers$gene, 'Sepp1', 'Selenop')
+ensembl_conversion <- getBM(
+  attributes = c('mgi_symbol','ensembl_gene_id','external_gene_name'),
+  filters = 'external_gene_name',
+  values = conversion_input,
+  mart = ensembl
+)
+markers$ensembl_id <- plyr::mapvalues(
+  x = markers$gene,
+  from = ensembl_conversion$mgi_symbol,
+  to = ensembl_conversion$ensembl_gene_id,
+  warn_missing = FALSE
+)
+table(grepl('ENS', markers$ensembl_id))
+write.table(markers, file = paste0(results_out, 'MG_subcluster_markers.csv'),
+            sep = ',', row.names = FALSE)
 
 
 # p1 <- DimPlot(mg, pt.size = 2, label = TRUE, label.size = 6) + theme_bw() +
