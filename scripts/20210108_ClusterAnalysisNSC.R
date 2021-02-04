@@ -16,7 +16,9 @@ require('dplyr')
 require('dendextend')
 # DO NOT set.seed() !!
 
-svz <- readRDS(file = '../data/20210108_SVZ.rds')
+results_out <- '../results/ClusterAnalysisNSC/'
+dir.create(path = results_out)
+svz <- readRDS(file = '../data/20210202_SVZ.rds')
 
 #' ## Cluster Analysis of NSCs
 # subset nsc
@@ -130,6 +132,29 @@ top_markers <- markers %>%
   group_by(cluster) %>%
   top_n(n = 10, wt = -p_val_adj)
 knitr::kable(x = top_markers)  
+
+
+# Convert gene-names to Ensembl IDs
+ensembl <- useEnsembl(biomart = 'ENSEMBL_MART_ENSEMBL', 
+                      dataset = 'mmusculus_gene_ensembl')
+conversion_input <- rownames(nsc[['RNA']]@counts)
+conversion_input <- plyr::mapvalues(conversion_input, 'Sepp1', 'Selenop')
+markers$gene <- plyr::mapvalues(markers$gene, 'Sepp1', 'Selenop')
+ensembl_conversion <- getBM(
+  attributes = c('mgi_symbol','ensembl_gene_id','external_gene_name'),
+  filters = 'external_gene_name',
+  values = conversion_input,
+  mart = ensembl
+)
+markers$ensembl_id <- plyr::mapvalues(
+  x = markers$gene,
+  from = ensembl_conversion$mgi_symbol,
+  to = ensembl_conversion$ensembl_gene_id,
+  warn_missing = FALSE
+)
+table(grepl('ENS', markers$ensembl_id))
+write.table(markers, file = paste0(results_out, 'NSC_subcluster_markers.csv'),
+            sep = ',', row.names = FALSE)
 
 # p1 <- DimPlot(nsc, pt.size = 2, label = TRUE, label.size = 6) + theme_bw() +
 #   NoLegend()

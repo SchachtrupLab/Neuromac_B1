@@ -17,7 +17,7 @@ require('dendextend')
 
 setwd('./scripts')
 results_out <- '../results/ClusterAnalysisMG/'
-dir.create(path =)
+dir.create(path = results_out)
 svz <- readRDS(file = '../data/20210202_SVZ.rds')
 
 #' ## Cluster Analysis of Microglia
