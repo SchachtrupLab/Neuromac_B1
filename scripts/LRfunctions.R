@@ -2,7 +2,7 @@
 ######### Ligand-receptor analysis functions ########
 
 # Written by: JSC
-# Date: 2020/07/27
+# Date: 2021/02/15
 # Method inspired by CellPhoneDB
 
 # Packages
