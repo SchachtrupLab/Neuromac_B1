@@ -1,0 +1,703 @@
+---
+title: "3_Microglia_Clustering"
+author: "James Choi"
+date: "Last compiled on: `r Sys.Date()`"
+output:
+  html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, fig.align='center', 
+                      tidy.opts=list(width.cutoff=60), tidy=TRUE,
+                      results='hold')
+```
+
+```{r directory_setup}
+if(!grepl('scripts', getwd())) {setwd('scripts')}
+results_out <- '../results/3_Microglia_Clustering/'
+dir.create(path = results_out)
+```
+
+```{r libraries}
+require('SingleCellExperiment')
+require('slingshot')
+require('Seurat')
+require('ggplot2')
+require('dplyr')
+set.seed(123)
+```
+
+```{r params_utils}
+shuffle_rows <- function(x) return(x[sample(1:nrow(x), size = nrow(x)),])
+remove_anno <- theme(panel.background = element_rect(color = NA, fill = NA),
+                     panel.border = element_rect(color = NA, fill = NA),
+                     panel.grid = element_blank(),
+                     axis.title = element_blank(),
+                     axis.text = element_blank(),
+                     axis.ticks = element_blank(),
+                     legend.title = element_blank(),
+                     legend.key = element_blank(),
+                     legend.background = element_blank())
+mg_cols <- c('Homeostatic' = '#000075',
+             'Activated' = '#f032e6', 
+             'Unknown' = '#4363d8',
+             'Development-associated' = '#3cb44b',
+             'Disease-associated' = '#42d4f4')
+svz_cols <-  c('NSC' = '#f58231',
+               'Microglia' = '#4363d8',
+               'Unknown/Ependymal' = '#ffe119')
+```
+
+```{r load_data}
+svz <- readRDS(file = '../data/svz.rds')
+mg <- readRDS(file = '../data/mg.rds')
+```
+
+``` {r highlight_mg}
+tmp_cols <- svz_cols
+tmp_cols[!names(tmp_cols) %in% 'Microglia'] <- 'grey95'
+mg_highlight <- FetchData(svz, vars = c('celltype', 'UMAP_1', 'UMAP_2')) %>%
+  arrange(celltype) %>% 
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes(fill = celltype, color = celltype),
+             pch = 21, size = 3.5) +
+  scale_fill_manual(values = tmp_cols) +
+  scale_color_manual(values = c('Microglia' = 'black',
+                                'NSC' = 'grey40', 
+                                'Unknown/Ependymal' = 'grey40')) +
+  remove_anno +
+  theme(legend.position = 'none')
+svg(filename = paste0(results_out, 'MG_highlighted_svz-umap.svg'),
+    height = 3.5, width = 4.5)
+mg_highlight
+dev.off()
+ggsave(filename = paste0(results_out, 'MG_highlighted_svz-umap.tiff'),
+       plot = mg_highlight, device = 'tiff', height = 3.5, width = 4.5)
+mg_highlight
+```
+
+```{r process_data}
+mg <- svz[, svz$celltype %in% 'Microglia']
+DefaultAssay(mg) <- 'RNA'
+mg$orig.ident <- factor(x = mg$orig.ident, levels = c('SCtrl', 'S1d', 'S7d'))
+```
+
+```{r variable_features, fig.height=3, fig.width=5.25}
+mg <- SCTransform(mg,
+                  assay = 'RNA',
+                  variable.features.n = 2000,
+                  vars.to.regress = 'CC.difference',
+                  verbose = FALSE)
+VariableFeaturePlot(mg) + theme_bw()
+```
+
+
+```{r elbow, fig.height=2.5, fig.width=3}
+mg <- RunPCA(mg, npcs = 50, verbose = FALSE)
+ElbowPlot(mg, ndims = 50) + theme_bw()
+```
+
+```{r  iterate_pca, fig.height=6, fig.width=17.5}
+test_pcs <- 4:13
+umaps <- vector(mode = "list", length = length(test_pcs))
+for (i in 1:length(test_pcs)) {
+  mg <- FindNeighbors(mg, dims = 1:test_pcs[i], verbose = FALSE)
+  mg <- FindClusters(mg, verbose = FALSE)
+  mg <- RunUMAP(mg, dims = 1:test_pcs[i], n.neighbors = 30, verbose = FALSE)
+  umaps[[i]] <- DimPlot(mg, pt.size = 1, label = TRUE, label.size = 6) +
+    theme_bw() + labs(title = paste("# PCs:", test_pcs[i]))
+}
+umaps <- cowplot::plot_grid(plotlist = umaps, ncol = length(test_pcs)/2)
+umaps
+```
+
+```{r dimloadings_sct, fig.height=8, fig.width=14}
+VizDimLoadings(mg, dims = test_pcs, nfeatures = 20, ncol = 5)
+```
+
+```{r pca_plots, fig.height=2.75, fig.width=9}
+p1 <- DimPlot(mg, pt.size = 2, reduction = 'pca', dims = c(2,3)) + theme_bw()
+p2 <- DimPlot(mg, pt.size = 2, reduction = 'pca', dims = c(4,5)) + theme_bw()
+p3 <- DimPlot(mg, pt.size = 2, reduction = 'pca', dims = c(6,7)) + theme_bw()
+pca_plots <- cowplot::plot_grid(p1, p2, p3, ncol = 3)
+pca_plots
+```
+
+```{r mg_umap, fig.height=3.5, fig.width=4.25}
+pcs <- 1:7
+mg <- FindNeighbors(mg, dims = pcs, verbose = FALSE)
+mg <- RunUMAP(mg, dims = pcs, verbose = FALSE)
+mg <- FindClusters(mg, resolution = 0.4, verbose = FALSE)
+mg$default_cluster <- mg$seurat_clusters
+Idents(mg) <- 'default_cluster'
+mg_default_umap <- FetchData(mg, vars = c('default_cluster', 'UMAP_1', 'UMAP_2')) %>%
+  shuffle_rows() %>%
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes_string(fill = 'default_cluster'),
+             color = 'black', pch = 21, size = 3) +
+  theme_bw() +
+  theme(legend.title = element_blank())
+mg_default_umap
+```
+
+Identify marker genes:  
+
+```{r mg_subtype_markers}
+Idents(mg) <- 'default_cluster'
+deg <- FindAllMarkers(mg, assay = 'RNA', only.pos = TRUE)
+top_genes <- deg %>%
+  group_by(cluster) %>%
+  top_n(n = 3, wt = -p_val_adj) %>%
+  ungroup()
+knitr::kable(x = top_genes, caption = 'Top 3 DE genes per cluster.')
+```
+
+```{r mg_feature_umap}
+genes <- c('Fcrls', 'Siglech','Olfml3','Gpr34','Trem2', 'Hexb')
+
+feature_umap <- FetchData(mg, vars = c(genes, 'UMAP_1', 'UMAP_2')) %>%
+  mutate(across(.cols = genes, 
+                .fns = function(x) (x-min(x))/(max(x)-min(x))
+  )) %>% 
+  reshape2::melt(id.vars = c('UMAP_1','UMAP_2')) %>% 
+  arrange(value) %>%
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes(fill = value), pch = 21, color = 'black', size = 3.5) +
+  facet_wrap(. ~ variable, ncol = 3) + 
+  scale_fill_gradientn(colors = rev(x = RColorBrewer::brewer.pal(n = 11, name = 'RdYlBu')), breaks = c(0, 1), labels = c('Min.', 'Max.')) +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_text(size = 12),
+        panel.background = element_rect(fill = NA, colour = 'black'),
+        panel.border = element_rect(fill = NA, color = 'black'),
+        legend.title = element_text(angle = 90),
+        plot.title = element_text(face = 'bold'),
+        strip.background = element_rect(fill = NA, color = NA)) +
+  guides(fill = guide_colorbar(
+    title = 'Expression',
+    ticks.colour = 'black',
+    frame.colour = 'black',
+    title.position = 'left'))
+feature_umapX <- feature_umap +
+  remove_anno + 
+  theme(legend.position = 'none')
+# With legend
+svg(filename = paste0(results_out, 'MG_microglia-genes_umap.svg'),
+    height = 7, width = 11)
+feature_umap
+dev.off()
+# Without legend
+svg(filename = paste0(results_out, 'MG_microglia-genes_umap_unlabeled.svg'),
+    height = 7, width = 10.5)
+feature_umapX
+dev.off()
+feature_umap
+```
+
+
+```{r mg_suptype_annotation}
+mg$subtype <- plyr::mapvalues(
+  x = mg$SCT_snn_res.0.4,
+  from = 0:4,
+  to = c('Homeostatic',
+         'Activated',
+         'Unknown',
+         'Development-associated',
+         'Disease-associated')
+)
+mg$subtype <- factor(x = mg$subtype, 
+                     levels = c('Homeostatic', 
+                                'Activated', 
+                                'Development-associated',
+                                'Disease-associated',
+                                'Unknown'))
+```
+
+```{r mg_subtype_umap, fig.height=3.5, fig.width=5.75}
+feat <- 'subtype'
+mg_umap <- FetchData(mg, vars = c(feat, 'UMAP_1', 'UMAP_2')) %>%
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes_string(fill = feat),
+             color = 'black', pch = 21, size = 3.5) +
+  scale_fill_manual(values = mg_cols)
+mg_umapX <- mg_umap + 
+  remove_anno +
+  theme(legend.position = 'none')
+# With legend
+svg(filename = paste0(results_out, 'MG_subtype_umap.svg'),
+    height = 3.5, width = 5.75)
+mg_umap
+dev.off()
+# Without legend
+svg(filename = paste0(results_out, 'MG_subtype_umap_unlabeled.svg'),
+    height = 3.5, width = 3.75)
+mg_umapX
+dev.off()
+# TIFF
+tiff(filename = paste0(results_out, 'MG_subtype_umap_unlabeled.tiff'),
+     height = 3.5, width = 3.75, units = 'in', res = 440)
+mg_umapX
+dev.off()
+mg_umap
+```
+
+
+```{r mg_subtype_time_umap, fig.height=3.5, fig.width=11.5}
+feat <- 'subtype'
+mg_umap_time <- FetchData(mg, vars = c(feat, 'orig.ident' ,'UMAP_1', 'UMAP_2')) %>%
+  shuffle_rows() %>%
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes_string(fill = feat),
+             color = 'black', pch = 21, size = 4) +
+  scale_fill_manual(values = mg_cols) +
+  facet_grid(. ~ orig.ident) +
+  theme(strip.text = element_text(size = 12))
+mg_umap_timeX <- mg_umap_time + 
+  remove_anno +
+  theme(legend.position = 'none')
+# With legend
+svg(filename = paste0(results_out, 'MG_subtype-time_umap.svg'),
+    height = 3.5, width = 11.5)
+mg_umap_time
+dev.off() 
+# Without legend
+svg(filename = paste0(results_out, 'MG_subtype-time_umap_unlabeled.svg'),
+    height = 3.5, width = 10.5)
+mg_umap_timeX
+dev.off()
+ggsave(filename = paste0(results_out, 'MG_subtype-time_umap_unlabeled.tiff'),
+    height = 3.5, width = 10.5, device = 'tiff', plot = mg_umap_timeX)
+mg_umap_time
+```
+
+
+```{r deg_heatmap, fig.height=7, fig.width=4, fig.cap='Heatmap of top 5 markers per cluster'}
+DefaultAssay(mg) <- 'RNA'
+Idents(mg) <- 'subtype'
+deg <- FindAllMarkers(mg, assay = 'RNA', only.pos = TRUE)
+write.csv(deg, file = paste0(results_out, 'MG_subtype_DEG.csv'))
+
+top_genes <- deg %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = -p_val_adj) %>% 
+  .[['gene']] %>% 
+  unique()
+sig_genes <- deg %>%
+  filter(p_val_adj < 0.001) %>% 
+  .[['gene']] %>%
+  unique()
+
+Idents(mg) <- 'subtype'
+DefaultAssay(mg) <- 'RNA'
+avg_exp <- ScaleData(object = mg[['SCT']]@data, features = top_genes)
+deg_heatmap <- cbind(data.frame(t(avg_exp)), 'ident' = mg@active.ident) %>%
+  reshape2::melt(id.vars = 'ident') %>%
+  group_by(ident, variable) %>%
+  summarise(avg_exp = mean(value)) %>%
+  mutate(variable = factor(variable, levels = rev(levels(variable)))) %>%
+  ggplot(mapping = aes(x = ident, y = variable, fill = avg_exp)) +
+  geom_tile(color = 'black') +
+  scale_x_discrete(expand = c(0,0)) +
+  scale_y_discrete(expand = c(0,0)) +
+  scale_fill_gradient2(low = "#053061",
+                       high = "#B2182B",
+                       na.value ="#B2182B") +
+  theme(axis.text.x = element_text(angle = 45, size = 12, hjust = 1),
+        axis.text.y = element_text(size = 10),
+        axis.title = element_blank(),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)) +
+  guides(fill = guide_colorbar(
+    title = 'Expression\nz-score',
+    barwidth = 1.25, 
+    frame.colour = 'black', 
+    frame.linewidth = 0.5, 
+    ticks.colour = 'black',
+    ticks.linewidth = 0.5))
+deg_heatmapX <- deg_heatmap + 
+  remove_anno +
+  theme(legend.position = 'none')
+ggsave(filename = paste0(results_out, 'MG_subtype-deg_heatmap.svg'),
+       plot = deg_heatmap, device = 'svg', height = 10, width = 4)
+ggsave(filename = paste0(results_out, 'MG_subtype-deg_heatmap_unlabeled.svg'),
+       plot = deg_heatmapX, device = 'svg', height = 10, width = 3)
+ggsave(filename = paste0(results_out, 'MG_subtype-deg_heatmap_unlabeled.tiff'),
+       plot = deg_heatmapX, device = 'tiff', height = 8, width = 3)
+deg_heatmap
+```
+
+
+```{r marker_vln, fig.height=4, fig.width=15}
+deg <- read.csv(file = paste0(results_out, 'MG_subtype_DEG.csv'))
+top_genes <- deg %>%
+  group_by(cluster) %>%
+  top_n(n = 4, wt = -p_val_adj)
+
+markers_vln <- vector(mode = 'list',
+                      length = length(levels(mg$subtype)))
+names(markers_vln) <- levels(mg$subtype)
+for (c in levels(mg$subtype)) {
+  viz_genes <- top_genes$gene[top_genes$cluster == c]
+  markers_vln[[c]] <- FetchData(
+    object = mg,
+    vars = c(viz_genes, 'subtype'),
+    slot = 'data'
+  ) %>%
+    reshape2::melt(id.vars = 'subtype') %>%
+    ggplot(mapping = aes(x = subtype, y = value)) +
+    geom_violin(mapping = aes(fill = subtype), 
+                color = 'black', 
+                scale = 'width') +
+    facet_wrap(. ~ variable, 
+               scales = 'free_y', 
+               ncol = 1, 
+               strip.position = 'left') +
+    scale_fill_manual(values = mg_cols) +
+    scale_y_continuous(position = 'right') +
+    ylab(label = 'Normalized expression') +
+    theme(panel.background = element_rect(fill = NA, color = 'black'),
+          panel.border = element_rect(fill = NA, color = 'black'),
+          legend.position = 'none',
+          strip.background = element_rect(fill = NA, color = NA),
+          strip.text.y.left = element_text(angle = 0, size = 12),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.title.y.right = element_text(size = 12),
+          axis.title.x = element_blank(),
+          axis.text.x = element_text(size = 12, angle = 45, hjust = 1))
+}
+markers_vln <- cowplot::plot_grid(plotlist = markers_vln, ncol = 5)
+
+svg(filename = paste0(results_out, 'MG_DEG_violin.svg'),
+    height = 4, width = 15)
+markers_vln + remove_anno
+dev.off()
+markers_vln + remove_anno
+```
+
+
+
+```{r mg_summed_exp_umap, fig.width=17, fig.height=3.5}
+Idents(mg) <- 'subtype'
+DefaultAssay(mg) <- 'RNA'
+
+deg <- read.csv(file = paste0(results_out, 'MG_subtype_DEG.csv'))
+top_genes <- deg %>%
+  group_by(cluster) %>%
+  top_n(n = 5, wt = -p_val_adj) %>%
+  top_n(n = 5, wt = avg_log2FC)
+
+markers_umap <- vector(mode = 'list', 
+                       length = length(levels(mg$subtype)))
+names(markers_umap) <- levels(mg$subtype)
+for (c in levels(mg$subtype)) {
+  tmp_genes <- top_genes$gene[top_genes$cluster == c]
+  exp_sum <- Matrix::colSums(mg[['RNA']]@data[tmp_genes,])
+  exp_sum <- (exp_sum - min(exp_sum)) / (max(exp_sum) - min(exp_sum))
+  plot_dat <- data.frame(cbind(exp_sum, mg[['umap']]@cell.embeddings))
+  markers_umap[[c]] <- plot_dat %>%
+    arrange(exp_sum) %>%
+    ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+    geom_point(mapping = aes(fill = exp_sum),
+               color = 'black',
+               pch = 21,
+               size = 4) +
+    labs(title = paste(c, 'microglia'),
+         subtitle = paste0('(', paste(tmp_genes, collapse = ', '), ')')) +
+    scale_fill_gradientn(colors = rev(RColorBrewer::brewer.pal(n = 11, name = 'RdYlBu')),
+                         breaks = c(0, 1),
+                         labels = c('Min.', 'Max.')) +
+    theme(axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title = element_text(size = 12),
+          panel.background = element_rect(fill = NA, colour = 'black'),
+          panel.border = element_rect(fill = NA, color = 'black'),
+          legend.title = element_text(angle = 90),
+          plot.title = element_text(face = 'bold')) +
+    guides(fill = guide_colorbar(
+      title = 'Sum of expression',
+      ticks.colour = 'black',
+      frame.colour = 'black',
+      title.position = 'left'))
+}
+sum_exp_legend <- cowplot::get_legend(plot = markers_umap[[1]])
+markers_umap <- lapply(
+  X = markers_umap, 
+  FUN = function(x) {
+    x <- x + 
+      theme(legend.position = 'none')
+    return(x)
+  }
+)
+markers_umap[[length(markers_umap) + 1]] <- sum_exp_legend
+
+# With labels
+summed_umap <- cowplot::plot_grid(
+  plotlist = markers_umap, 
+  ncol = length(markers_umap),
+  rel_widths = c(1,1,1,1,1,0.5)
+)
+svg(filename = paste0(results_out, 'MG_deg-sumExp_umap.svg'),
+    height = 3.5, width = 17)
+summed_umap
+dev.off()
+
+# Without labels
+summed_umapX <- lapply(
+  X = markers_umap[1:(length(markers_umap) - 1)],
+  FUN = function(x) {
+    x <- x + 
+      remove_anno + 
+      theme(plot.title = element_blank(),
+            plot.subtitle = element_blank())
+  }
+)
+summed_umapX[[length(summed_umapX)+1]] <- sum_exp_legend
+summed_umapX <- cowplot::plot_grid(
+  plotlist = summed_umapX, 
+  ncol = length(summed_umapX),
+  rel_widths = c(rep(1, length = length(summed_umapX) - 1), 0.5)
+)
+svg(filename = paste0(results_out, 'MG_deg-sumExp_umap_unlabeled.svg'),
+    height = 3.5, width = 17.5)
+summed_umapX
+dev.off()
+tiff(filename = paste0(results_out, 'MG_deg-sumExp_umap_unlabeled.tiff'),
+     height = 3.5, width = 17.5, units = 'in', res = 440)
+summed_umapX
+dev.off()
+```
+
+```{r mg_counts, fig.height=3, fig.width=4.5}
+Idents(mg) <- 'subtype'
+counts <- data.frame(table(Idents(mg), mg$orig.ident))
+names(counts) <- c('subtype','orig.ident','count')
+write.csv(file = paste0(results_out, 'MG_subtype_cell-counts.csv'),
+          x = counts)
+counts <- counts %>% 
+  ggplot(mapping = aes(x = orig.ident, y = count, group = subtype)) + 
+  geom_bar(aes(fill = subtype), stat = 'identity', color = 'black', size = 0.75, position = 'stack') +
+  scale_fill_manual(values = mg_cols) +
+  scale_y_continuous() + 
+  scale_x_discrete() +
+  ylab('% of cells')
+
+# With legend
+counts
+svg(filename = paste0(results_out, 'MG_subtype-counts_bar.svg'),
+    height = 3, width = 4.5)
+counts
+dev.off() 
+
+# Without legend
+countsX <- counts + 
+  remove_anno + 
+  theme(axis.line = element_line(),
+        axis.ticks = element_line(),
+        legend.position = 'none')
+# propsX
+svg(filename = paste0(results_out, 'MG_subtype-counts_bar_unlabeled.svg'),
+    height = 3, width = 2.5)
+countsX
+dev.off() 
+```
+
+
+```{r mg_proportions, fig.height=3, fig.width=4.5}
+Idents(mg) <- 'subtype'
+counts <- data.frame(table(Idents(mg), mg$orig.ident))
+names(counts) <- c('subtype','orig.ident','count')
+props <- counts %>% 
+  ggplot(mapping = aes(x = orig.ident, y = count, group = subtype)) + 
+  geom_bar(aes(fill = subtype), stat = 'identity', color = 'black', size = 0.75, position = 'fill') +
+  scale_fill_manual(values = mg_cols) +
+  scale_y_continuous() + 
+  scale_x_discrete() +
+  ylab('% of cells')
+
+# With legend
+props
+svg(filename = paste0(results_out, 'MG_subtype-proportion_bar.svg'),
+    height = 3, width = 4.5)
+props
+dev.off() 
+
+# Without legend
+propsX <- props + 
+  remove_anno + 
+  theme(axis.line = element_line(),
+        axis.ticks = element_line(),
+        legend.position = 'none')
+# propsX
+svg(filename = paste0(results_out, 'MG_subtype-proportion_bar_unlabeled.svg'),
+    height = 3, width = 2.5)
+propsX
+dev.off()
+# TIFF
+tiff(filename = paste0(results_out, 'MG_subtype-proportion_bar_unlabeled.tiff'),
+     height = 3, width = 2.5, units = 'in', res = 440)
+propsX
+dev.off()
+```
+
+```{r mg_subset, results='hide'}
+DefaultAssay(mg) <- 'SCT'
+Idents(mg) <- 'subtype'
+mg_subset <- mg[, mg$subtype %in% c('Homeostatic', 'Activated', 'Disease-associated')]
+mg_subset <- FindNeighbors(mg_subset, dims = 1:7)
+mg_subset <- FindClusters(mg_subset, resolution = 0.8)
+mg_subset <- RunUMAP(mg_subset, dims = 1:7, n.neighbors = 15)
+```
+
+```{r mg_compute_trajectory}
+mg_subset_sce <- SingleCellExperiment::SingleCellExperiment(
+  assays = list('counts' = mg_subset[['RNA']]@counts,
+                'logcounts' = mg_subset[['RNA']]@data)
+)
+colData(mg_subset_sce) <- DataFrame(mg_subset@meta.data)
+mg_subset_sce_umap <- mg_subset[['umap']]@cell.embeddings
+reducedDim(mg_subset_sce, type = 'UMAP') <- mg_subset_sce_umap
+mg_subset_sce <- slingshot::slingshot(
+  data = mg_subset_sce, 
+  clusterLabels = 'subtype',
+  reducedDim = 'UMAP',
+  start.clus = 'Homeostatic',
+  approx_points = FALSE
+)
+mg_subset_sds <- slingshot::SlingshotDataSet(data = mg_subset_sce)
+```
+
+
+```{r mg_trajectory_plot}
+curve_plot <- FetchData(object = mg_subset, 
+                        vars = c('subtype', 'UMAP_1', 'UMAP_2')) |>
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(color = 'grey80', 
+             size = 4)
+ncurves <- length(slingCurves(mg_subset_sds))
+label_coords <- data.frame()
+plots <- list()
+for (i in 1:ncurves) {
+  curve <- data.frame(mg_subset_sds@curves[[i]]$s)[mg_subset_sds@curves[[i]]$ord,]
+  curve <- unique(curve)
+  curve$ptime <- 1:nrow(curve)
+  # label_coords <- curve[nrow(curve),c('UMAP_1','UMAP_2')]
+  # label_coords$label <- paste('Curve', i)
+  plots[[i]] <- curve_plot +
+    geom_path(data = curve, 
+              mapping = aes(x = UMAP_1, y = UMAP_2, color = ptime),
+              lwd = 3,
+              lineend = 'round') +
+    scale_color_viridis_c(option = "D",
+                          breaks = c(min(curve$ptime), max(curve$ptime)),
+                          labels = c('Early','Late')) +
+    # ggrepel::geom_text_repel(
+    #   data = label_coords,
+    #   mapping = aes(x = UMAP_1, y = UMAP_2, label = label),
+    #   size = 5
+    # ) +
+    # ggtitle(label = 'Slingshot pseudotime of microglia') +
+    ggtitle(label = paste('Curve', i)) +
+    # theme_bw() +
+    theme(panel.background = element_rect(color = NA, fill = NA),
+          panel.border = element_rect(color = NA, fill = NA),
+          axis.ticks = element_blank(),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_blank(),
+          strip.placement = 'inside',
+          legend.position = c(0.25, 0.8),
+          legend.direction = 'horizontal',
+          legend.title = element_text(size = 12),
+          legend.text = element_text(size = 12)) +
+    guides(color = guide_colorbar(override.aes = list(size = 6),
+                                  title.position = 'top',
+                                  title.hjust = 0.5,
+                                  title = paste('pseudotime')))
+}
+plots[[1]]
+plots[[2]]
+curve_plot <- (plots[[1]] | plots[[2]])
+curve_plot
+
+ggsave(
+  filename = paste0(results_out, 'MG_pseudotimeProjectedCurves_umap_unlabeled.tiff'),
+  plot = curve_plot,
+  device = 'tiff',
+  height = 4, width = 8
+)
+```
+
+
+```{r mg_subset_umap_timepoint, fig.height=6.5, fig.width=4}
+dat <- expand.grid('display_time' = levels(mg_subset$orig.ident),
+                   'barcode' = colnames(mg_subset),
+                   stringsAsFactors = FALSE)
+dat$real_time <- sapply(strsplit(x = dat$barcode, split = '_'), `[`, 1)
+dat$display <- ifelse(test = dat$display_time == dat$real_time, 
+                      yes = 'A',
+                      no = 'B')
+ind_match <- match(x = dat$barcode,
+                   table = rownames(mg_subset[['umap']]@cell.embeddings))
+dat$UMAP_1 <- mg_subset[['umap']]@cell.embeddings[ind_match, 'UMAP_1']
+dat$UMAP_2 <- mg_subset[['umap']]@cell.embeddings[ind_match, 'UMAP_2']
+dat$real_time <- factor(x = dat$real_time, levels = c('SCtrl', 'S1d', 'S7d'))
+dat$display_time <- factor(x = dat$display_time, levels = c('SCtrl', 'S1d', 'S7d'))
+
+max_x <- max(mg_subset[['umap']]@cell.embeddings[,'UMAP_1'])
+max_y <- max(mg_subset[['umap']]@cell.embeddings[,'UMAP_2'])
+mg_subset_time_umap <- dat |>
+  arrange(desc(display)) |>
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(mapping = aes(color = display), size = 3) + 
+  facet_wrap(display_time ~ ., strip.position = 'left', ncol = 1) +
+  scale_color_manual(values = c('A' = 'red2', 'B' = 'grey80')) +
+  theme(panel.background = element_rect(color = NA, fill = NA),
+        panel.border = element_rect(color = NA, fill = NA),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y.left = element_text(size = 12, angle = 0),
+        legend.position = 'none')
+
+# With legend
+mg_subset_time_umap
+svg(filename = paste0(results_out, 'MG_pseudotime_timepoint_umap.svg'),
+    height = 6.5, width = 4.5)
+nsc_time_umap
+dev.off()
+
+# Without legend
+nsc_time_umapX <- dat |>
+  arrange(desc(display)) |>
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(mapping = aes(color = display), size = 3) + 
+  facet_wrap(display_time ~ ., strip.position = 'left', ncol = 1) +
+  scale_color_manual(values = c('A' = 'red2', 'B' = 'grey80')) +
+  theme(panel.background = element_rect(color = NA, fill = NA),
+        panel.border = element_rect(color = NA, fill = NA),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y.left = element_blank(),
+        legend.position = 'none')
+# nsc_time_umapX
+svg(filename = paste0(results_out, 'MG_pseudotime_timepoint_umap_unlabeled.svg'),
+    height = 6.5, width = 4)
+nsc_time_umapX
+dev.off()
+ggsave(filename = paste0(results_out, 'MG_pseudotime_timepoint_umap_unlabeled.tiff'),
+       plot = nsc_time_umapX, device = 'tiff', height = 7, width = 3)
+```
+
+
+```{r save_data}
+saveRDS(mg, file = '../data/mg.rds')
+```
+
+```{r session_info}
+sessionInfo()
+```

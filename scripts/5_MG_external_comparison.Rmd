@@ -1,0 +1,363 @@
+---
+title: "5_Microglia_External_Comparison"
+author: "James Choi"
+date: "Last compiled on: `r Sys.Date()`"
+output:
+  html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, fig.align='center', 
+                      tidy.opts=list(width.cutoff=60), tidy=TRUE)
+```
+
+
+```{r libraries}
+require('SingleCellExperiment')
+require('Seurat')
+require('ggplot2')
+require('dplyr')
+```
+
+
+```{r directories}
+results_out <- '../results/5_MG_External_Comparison/'
+dir.create(path = results_out)
+remove_anno <- theme(panel.background = element_rect(color = NA, fill = NA),
+                     panel.border = element_rect(color = NA, fill = NA),
+                     panel.grid = element_blank(),
+                     axis.title = element_blank(),
+                     axis.text = element_blank(),
+                     axis.ticks = element_blank(),
+                     legend.title = element_blank(),
+                     legend.key = element_blank(),
+                     legend.background = element_blank())
+shuffle_rows <- function(x) {
+  x[sample(x = 1:nrow(x), size = nrow(x)),]
+}
+```
+
+
+```{r data_import}
+svz <- readRDS(file = '../data/svz.rds')
+
+# To download zywitza counts file:
+# 1. go here: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE111527
+# 2. at supplementary files at bottom, download GSE111527_RAW.tar
+# 3. unzip .tar file (should give you folder with .gz files)
+zywitza_counts <- '../ref/GSE111527_RAW_Zywitza2018/'
+batches <- list.files(zywitza_counts)
+batches <- batches[!grepl('KO|WT', batches)]
+# Load data from WT animals.
+dat <- vector(mode = 'list', length = length(batches))
+names(dat) <- batches
+for (i in 1:length(batches)) {
+  tmp <- read.table(
+    file = gzfile(
+      description = paste0(zywitza_counts, batches[i]),
+      open = 'rt',
+    ),
+    header = TRUE,
+    row.names = 1
+  )
+  dat[[batches[i]]] <- Matrix::Matrix(data = as.matrix(tmp),
+                                      sparse = TRUE)
+  message(paste('Loading file', batches[i], '...'))
+}
+shared_genes <- lapply(
+  X = dat, 
+  FUN = rownames
+)
+shared_genes <- Reduce(intersect, shared_genes)
+zyw <- lapply(
+  X = dat,
+  FUN = function(x) {
+    x[rownames(x) %in% shared_genes,]
+  }
+)
+for (i in 1:length(zyw)) {
+  tmp <- sapply(
+    X = strsplit(x = names(zyw)[i], split = '_'),
+    FUN = `[`, 
+    1
+  )
+  colnames(zyw[[i]]) <- paste(colnames(zyw[[i]]), tmp, sep = '_')
+}
+```
+
+
+```{r}
+zyw <- Reduce(f = cbind, x = zyw)
+zyw <- zyw %>% 
+  CreateSeuratObject(project ='Zywitza') %>% 
+  NormalizeData() %>% 
+  FindVariableFeatures(nfeatures = 2000) %>% 
+  ScaleData() %>% 
+  RunPCA() %>% 
+  FindNeighbors(dims = 1:10) %>% 
+  FindClusters(resolution = 0.4) %>% 
+  RunUMAP(dims = 1:10)
+```
+
+
+```{r find_zyw_mg, fig.height=3.5, fig.width=17, fig.cap='t-SNE of marker genes for microglia and NSPCs'}
+p1 <- DimPlot(zyw, label = TRUE, label.size = 4)
+p2 <- FeaturePlot(zyw, features = c('Cx3cr1','Ascl1','Top2a','Dcx'), order = TRUE, ncol = 4)
+cowplot::plot_grid(p1, p2, rel_widths = c(1.5, 5))
+saveRDS(zyw, file = paste0(results_out, 'Zywitza_SVZ.rds'))
+```
+
+
+```{r extract_svz_mg}
+zyw <- readRDS(file = paste0(results_out, 'Zywitza_SVZ.rds'))
+zyw_mg <- zyw[,zyw$RNA_snn_res.0.4 == 4]
+
+mg <- readRDS(file = '../data/mg.rds')
+DefaultAssay(mg) <- 'RNA'
+
+shared_genes <- rownames(zyw_mg)[rownames(zyw_mg) %in% rownames(mg)]
+zyw_mg <- zyw_mg[shared_genes,]
+mg <- mg[shared_genes,]
+mg <- mg[, !mg$subtype %in% c('Development-associated', 'Unknown')]
+```
+
+```{r mg_integration}
+zmg <- list('mg' = mg,
+           'zyw_mg' = zyw_mg)
+zmg <- lapply(
+  X = zmg,
+  FUN = FindVariableFeatures,
+  nfeatures = 1000,
+  verbose = FALSE
+)
+zmg_anchors <- FindIntegrationAnchors(
+  object.list = zmg,
+  verbose = FALSE
+)
+zmg <- IntegrateData(
+  anchorset = zmg_anchors,
+  verbose = FALSE
+)
+DefaultAssay(zmg) <- 'integrated'
+zmg <- ScaleData(zmg, verbose = FALSE)
+zmg <- RunPCA(zmg, npcs = 30, verbose = FALSE)
+ElbowPlot(zmg, ndims = 30)
+zmg <- FindNeighbors(zmg, dims = 1:8, verbose = FALSE)
+zmg <- RunUMAP(zmg, dims = 1:8, verbose = FALSE)
+zmg <- FindClusters(zmg, resolution = 0.4)
+
+# 2021-10-11 (zywitza vs SVZ microglia, specific gene comparison)
+# Subtype-specific gene expression violins
+genes <- c('P2ry12','Tmem119','Hexb','Cx3cr1',
+           'Apoe','Axl','Cd52','Lgals3bp',
+           'Srgn','Tlr7','Socs3','Id2')
+VlnPlot(zmg, features = genes, ncol = 4, pt.size = 0, split.by = 'subtype')
+
+
+# Without boundary
+zyw_zmg_umap_study <- FetchData(zmg, c('UMAP_1','UMAP_2','orig.ident')) |>
+  dplyr::arrange(desc(orig.ident)) |>
+  # shuffle_rows() |>
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(mapping = aes(color = orig.ident), size = 3) +
+  scale_color_manual(values = c('Zywitza' = 'grey80',
+                                'SCtrl' = 'dodgerblue',
+                                'S1d' = 'red',
+                                'S7d' = 'green')) +
+  remove_anno
+
+# With legend
+svg(filename = paste0(results_out, 'Zywitza_MG_UMAP.svg'),
+    height = 3, width = 4)
+zyw_zmg_umap_study
+dev.off()
+
+# Without legend
+zyw_zmg_umap_studyX <- zyw_zmg_umap_study + theme(legend.position = 'none')
+svg(filename = paste0(results_out, 'Zywitza_MG_UMAP_unlabeled.svg'),
+    height = 3, width = 3)
+zyw_zmg_umap_studyX
+dev.off()
+
+
+# With thin boundary
+zyw_zmg_umap_study <- FetchData(zmg, c('UMAP_1','UMAP_2','orig.ident')) |>
+  dplyr::arrange(desc(orig.ident)) |>
+  # shuffle_rows() |>
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(mapping = aes(fill = orig.ident), color = 'black',pch = 21, size = 2) +
+  scale_fill_manual(values = c('Zywitza' = 'grey80',
+                                'SCtrl' = 'dodgerblue',
+                                'S1d' = 'red',
+                                'S7d' = 'green')) +
+  remove_anno
+
+# With legend
+svg(filename = paste0(results_out, 'Zywitza_MG_UMAP_boundary.svg'),
+    height = 3, width = 4)
+zyw_zmg_umap_study
+dev.off()
+
+# Without legend
+zyw_zmg_umap_studyX <- zyw_zmg_umap_study + theme(legend.position = 'none')
+svg(filename = paste0(results_out, 'Zywitza_MG_UMAP_boundary_unlabeled.svg'),
+    height = 3, width = 3)
+zyw_zmg_umap_studyX
+dev.off()
+```
+
+```{r venn_diagram}
+mg <- readRDS(file = '../data/mg.rds')
+
+DefaultAssay(mg) <- 'RNA'
+Idents(mg) <- 'subtype'
+DimPlot(mg, pt.size = 2, label = TRUE, label.size = 6) + NoLegend()
+
+#' Data used are the following:  
+
+# ks_dam: https://www.cell.com/cms/10.1016/j.cell.2017.05.018/attachment/dbe41461-b773-414d-a9c2-bc38f7869d34/mmc3.xlsx
+# li_p7c1: https://www.cell.com/cms/10.1016/j.neuron.2018.12.006/attachment/db7e7972-42af-4a3d-8708-f51077113733/mmc6.xlsx (NOTE: Use only P7 vs C1 comparison sheet)
+# hammond_irm: https://www.cell.com/cms/10.1016/j.immuni.2018.11.004/attachment/0cc60480-88c5-4b1d-adba-4d20a553e6cb/mmc2.xlsx (NOTE: Use only IR2 comparison sheet)
+# # hammond_irm: https://www.cell.com/cms/10.1016/j.immuni.2018.11.004/attachment/0cc60480-88c5-4b1d-adba-4d20a553e6cb/mmc2.xlsx (NOTE: Use only Cluster 4 comparison sheet)
+
+ks_dam <- read.table(file = '../ref/KerenShaul2017_TableS3_HomeostaticMG_vs_DAM.txt',
+                     sep = '\t', header = TRUE)
+# li_p7c1 <- read.table(file = '../ref/Li2019_TableS5_MG_P7C1_DEgenes.txt',
+#                       sep = '\t', header = TRUE)
+hammond_irm <- read.table(file = '../ref/Hammond2019_TableS1_IRM2_DEgenes.txt',
+                          sep = '\t', header = TRUE)
+# hammond_c4 <- read.table(file = '../ref/Hammond2019_TableS1_MGcluster4_DEgenes.txt',
+#                          sep = '\t', header = TRUE)
+
+deg_mgAct <- FindMarkers(
+  object = mg, 
+  ident.1 = 'Activated',
+  ident.2 = 'Homeostatic',
+  # only.pos = TRUE,
+  assay = 'RNA'
+)
+write.csv(deg_mgAct,
+          file = paste0(results_out, 'DEG-full-list_mgAct_vs_Homeostatic.csv'),
+          row.names = TRUE)
+deg_mgDA <- FindMarkers(
+  object = mg, 
+  ident.1 = 'Disease-associated',
+  ident.2 = 'Homeostatic',
+  # only.pos = TRUE,
+  assay = 'RNA'
+)
+write.csv(deg_mgDA,
+          file = paste0(results_out, 'DEG-full-list_mgDA_vs_Homeostatic.csv'),
+          row.names = TRUE)
+
+# Keren-Shaul, 2017, DAMs vs Homeostatic Microglia
+ks_dam_set <- with(
+  data = ks_dam,
+  expr = Fold.change..DAM.to.homeostatic.microglia. > 0 &
+    DAM.FDR.p.value >= 3 &
+    !is.na(DAM.FDR.p.value))
+ks_dam_set <- unique(ks_dam[ks_dam_set,'Gene.name'])
+length(ks_dam_set)
+
+# # Li, 2019, P7-C2 (phagocytic?) microglia vs other P7 clusters
+# li_p7c1_set <- with(
+#   data = li_p7c1,
+#   expr = avg_logFC > 0 &
+#     p_val_adj <= 0.001
+# )
+# li_p7c1_set <- unique(li_p7c1[li_p7c1_set,'gene'])
+# length(li_p7c1_set)
+
+# Hammond, 2019, Injury-responsive microglia cluster 2 (IRM2) vs other microglia
+# (which come from control and saline-injected)
+hammond_irm_set <- with(
+  data = hammond_irm,
+  expr = Fold.Change > 0 & # all are positive bc theyre marker genes
+    Padj..FDR. <= 0.001
+)
+hammond_irm_set <- unique(hammond_irm[hammond_irm_set,'Gene'])
+length(hammond_irm_set)
+
+# # Hammond, 2019, P4/5 cluster 4 vs other microglia (Axon tract-associated MG)
+# hammond_c4_set <- with(
+#   data = hammond_c4,
+#   expr = Fold.Change > 0 & # all are positive bc theyre marker genes
+#     Padj..FDR. <= 0.001
+# )
+# hammond_c4_set <- unique(hammond_c4[hammond_c4_set,'Gene'])
+# length(hammond_c4_set)
+
+# SVZ activated microglia
+deg_mgAct_set <- with(
+  data = deg_mgAct,
+  expr = avg_log2FC > 0 &
+    p_val_adj <= 0.001
+)
+deg_mgAct_set <- unique(rownames(deg_mgAct[deg_mgAct_set,]))
+length(deg_mgAct_set)
+
+# SVZ disease-associaed microglia
+deg_mgDA_set <- with(
+  data = deg_mgDA,
+  expr = avg_log2FC > 0 &
+    p_val_adj <= 0.001
+)
+deg_mgDA_set <- unique(rownames(deg_mgDA[deg_mgDA_set,]))
+length(deg_mgDA_set)
+
+
+require('eulerr')
+
+deg_mgAct_venn <- list(
+  'DAM (KerenShaul)' = ks_dam_set,
+  'IRM (Hammond)' = hammond_irm_set,
+  'Activated MG (SVZ)' = deg_mgAct_set
+)
+
+svg(filename = paste0(results_out, 'Venn_ActMG.svg'), height = 4, width = 5)
+plot(euler(deg_mgAct_venn), quantities = TRUE)
+dev.off()
+
+
+write.csv(file = paste0(results_out, 'DAM_IRM_overlap.csv'),
+          x = intersect(deg_mgAct_venn[[1]], deg_mgAct_venn[[2]]),
+          row.names = FALSE)
+
+write.csv(file = paste0(results_out, 'mgAct_DAM_overlap.csv'),
+          x = intersect(deg_mgAct_venn[[3]], deg_mgAct_venn[[1]]),
+          row.names = FALSE)
+write.csv(file = paste0(results_out, 'mgAct_IRM_overlap.csv'),
+          x = intersect(deg_mgAct_venn[[3]], deg_mgAct_venn[[2]]),
+          row.names = FALSE)
+write.csv(file = paste0(results_out, 'mgAct_DAM_IRM_overlap.csv'),
+          x = intersect(intersect(deg_mgAct_venn[[3]], deg_mgAct_venn[[2]]), deg_mgAct_venn[[1]]),
+          row.names = FALSE)
+
+
+deg_mgDA_venn <- list(
+  'DAM (KerenShaul)' = ks_dam_set,
+  'IRM (Hammond)' = hammond_irm_set,
+  'Disease-associated MG (SVZ)' = deg_mgDA_set
+)
+
+svg(filename = paste0(results_out, 'Venn_DiseaseAssociatedMG.svg'), height = 4, width = 5)
+plot(euler(deg_mgDA_venn), quantities = TRUE)
+dev.off()
+
+write.csv(file = paste0(results_out, 'mgDA_DAM_overlap.csv'),
+          x = intersect(deg_mgDA_venn[[3]], deg_mgDA_venn[[1]]),
+          row.names = FALSE)
+write.csv(file = paste0(results_out, 'mgDA_IRM_overlap.csv'),
+          x = intersect(deg_mgDA_venn[[3]], deg_mgDA_venn[[2]]),
+          row.names = FALSE)
+write.csv(file = paste0(results_out, 'mgDA_DAM_IRM_overlap.csv'),
+          x = intersect(intersect(deg_mgDA_venn[[3]], deg_mgDA_venn[[2]]), deg_mgDA_venn[[1]]),
+          row.names = FALSE)
+
+
+# Statistical test (hyppergeometric test) for signficance of gene set overlaps
+
+# 1. http://nemates.org/MA/progs/overlap_stats.html
+# 2. https://www.vosesoftware.com/riskwiki/MultivariateHypergeometricdistribution.php
+```
+

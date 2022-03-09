@@ -1,0 +1,74 @@
+---
+title: "7: Unknown/Ependymal Cells"
+author: "James Choi"
+date: "Last compiled on: `r Sys.Date()`"
+output:
+  html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, fig.align='center', 
+                      tidy.opts=list(width.cutoff=60), tidy=TRUE)
+```
+
+```{r directory_setup}
+results_out <- '../results/7_UnknownEpendymal/'
+dir.create(path = results_out)
+```
+
+```{r libraries}
+require('Seurat')
+require('ggplot2')
+require('dplyr')
+require('SingleCellExperiment')
+require('slingshot')
+```
+
+```{r params_utils}
+shuffle_rows <- function(x) return(x[sample(1:nrow(x), size = nrow(x)),])
+remove_anno <- theme(panel.background = element_rect(color = NA, fill = NA),
+                     panel.border = element_rect(color = NA, fill = NA),
+                     panel.grid = element_blank(),
+                     axis.title = element_blank(),
+                     axis.text = element_blank(),
+                     axis.ticks = element_blank(),
+                     legend.title = element_blank(),
+                     legend.key = element_blank(),
+                     legend.background = element_blank())
+svz_cols <-  c('NSC' = '#f58231',
+               'Microglia' = '#4363d8',
+               'Unknown/Ependymal' = '#ffe119')
+```
+
+
+```{r load_data}
+svz <- readRDS(file = '../data/svz.rds')
+```
+
+``` {r ependymal_highlight}
+tmp_cols <- svz_cols
+tmp_cols[!names(tmp_cols) %in% 'Unknown/Ependymal'] <- 'grey95'
+epen_highlight <- FetchData(svz, vars = c('celltype', 'UMAP_1', 'UMAP_2')) %>%
+  # shuffle_rows() %>% 
+  arrange(celltype) %>% 
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes(fill = celltype, color = celltype),
+             pch = 21, size = 3.5) +
+  scale_fill_manual(values = tmp_cols) +
+  scale_color_manual(values = c('NSC' = 'grey50',
+                                'Microglia' = 'grey50', 
+                                'Unknown/Ependymal' = 'black')) +
+  remove_anno +
+  theme(legend.position = 'none')
+svg(filename = paste0(results_out, 'UnknownEpendymal_highlighted_svz-umap.svg'),
+    height = 3.5, width = 4.5)
+epen_highlight
+dev.off()
+nsc_highlight
+```
+
+
+```{r session_info}
+sessionInfo()
+```
+

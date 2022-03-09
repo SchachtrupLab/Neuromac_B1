@@ -1,0 +1,754 @@
+---
+title: "4: NSC Clustering"
+author: "James Choi"
+date: "Last compiled on: `r Sys.Date()`"
+output:
+  html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, fig.align='center', 
+                      tidy.opts=list(width.cutoff=60), tidy=TRUE)
+```
+
+```{r directory_setup}
+if(!(grepl('scripts', getwd()))) {setwd('scripts')}
+results_out <- '../results/4_NSC_Clustering/'
+dir.create(path = results_out)
+```
+
+```{r libraries}
+require('Seurat')
+require('ggplot2')
+require('dplyr')
+require('SingleCellExperiment')
+require('slingshot')
+```
+
+```{r params_utils}
+shuffle_rows <- function(x) return(x[sample(1:nrow(x), size = nrow(x)),])
+remove_anno <- theme(panel.background = element_rect(color = NA, fill = NA),
+                     panel.border = element_rect(color = NA, fill = NA),
+                     panel.grid = element_blank(),
+                     axis.title = element_blank(),
+                     axis.text = element_blank(),
+                     axis.ticks = element_blank(),
+                     legend.title = element_blank(),
+                     legend.key = element_blank(),
+                     legend.background = element_blank())
+nsc_cols <- c('Neuroblast' = '#ffe119',
+              'Quiescent B Cell' = '#e6194B',
+              'Activated B Cell' = '#800000',
+              'C Cell' = '#f58231')
+svz_cols <-  c('NSC' = '#f58231',
+               'Microglia' = '#4363d8',
+               'Unknown/Ependymal' = '#ffe119')
+```
+
+
+```{r load_data}
+svz <- readRDS(file = '../data/svz.rds')
+```
+
+``` {r nsc_highlight}
+tmp_cols <- svz_cols
+tmp_cols[!names(tmp_cols) %in% 'NSC'] <- 'grey95'
+nsc_highlight <- FetchData(svz, vars = c('celltype', 'UMAP_1', 'UMAP_2')) %>%
+  shuffle_rows() %>% 
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes(fill = celltype, color = celltype),
+             pch = 21, size = 3.5) +
+  scale_fill_manual(values = tmp_cols) +
+  scale_color_manual(values = c('NSC' = 'black',
+                                'Microglia' = 'grey50', 
+                                'Unknown/Ependymal' = 'grey50')) +
+  remove_anno +
+  theme(legend.position = 'none')
+svg(filename = paste0(results_out, 'NSC_highlighted_svz-umap.svg'),
+    height = 3.5, width = 4.5)
+nsc_highlight
+dev.off()
+ggsave(filename = paste0(results_out, 'NSC_highlighted_svz-umap.tiff'),
+       plot = nsc_highlight, height = 3.5, width = 4.5, device = 'tiff')
+nsc_highlight
+```
+
+```{r process_data}
+nsc <- svz[, svz$celltype %in% 'NSC']
+DefaultAssay(nsc) <- 'RNA'
+nsc$orig.ident <- factor(x = nsc$orig.ident, levels = c('SCtrl', 'S1d', 'S7d'))
+```
+
+```{r variable_features, fig.height=3, fig.width=5.25}
+nsc <- SCTransform(nsc,
+                   assay = 'RNA',
+                   variable.features.n = 2000,
+                   vars.to.regress = 'CC.difference',
+                   verbose = FALSE)
+VariableFeaturePlot(nsc) + theme_bw()
+```
+
+```{r elbow, fig.height=2.5, fig.width=3}
+nsc <- RunPCA(nsc, npcs = 50, verbose = FALSE)
+ElbowPlot(nsc, ndims = 50) + theme_bw()
+```
+
+```{r  iterate_pca, fig.height=6, fig.width=17.5}
+test_pcs <- 6:15
+umaps <- vector(mode = "list", length = length(test_pcs))
+for (i in 1:length(test_pcs)) {
+  nsc <- FindNeighbors(nsc, dims = 1:test_pcs[i], verbose = FALSE)
+  nsc <- FindClusters(nsc, verbose = FALSE)
+  nsc <- RunUMAP(nsc, dims = 1:test_pcs[i], n.neighbors = 30, verbose = FALSE)
+  umaps[[i]] <- DimPlot(nsc, pt.size = 1, label = TRUE, label.size = 6) +
+    theme_bw() + labs(title = paste("# PCs:", test_pcs[i]))
+}
+umaps <- cowplot::plot_grid(plotlist = umaps, ncol = length(test_pcs)/2)
+umaps
+```
+
+```{r dimloadings_sct, fig.height=8, fig.width=14}
+VizDimLoadings(nsc, dims = 6:15, nfeatures = 20, ncol = 5)
+```
+
+```{r pca_plots, fig.height=2.75, fig.width=9}
+p1 <- DimPlot(nsc, pt.size = 2, reduction = 'pca', dims = c(8,11)) + theme_bw()
+p2 <- DimPlot(nsc, pt.size = 2, reduction = 'pca', dims = c(8,13)) + theme_bw()
+p3 <- DimPlot(nsc, pt.size = 2, reduction = 'pca', dims = c(11,13)) + theme_bw()
+pca_plots <- cowplot::plot_grid(p1, p2, p3, ncol = 3)
+pca_plots
+```
+
+```{r nsc_umap, fig.height=2.5, fig.width=4.25}
+pcs <- 1:12
+nsc <- FindNeighbors(nsc, dims = pcs, verbose = FALSE)
+nsc <- RunUMAP(nsc, dims = pcs, verbose = FALSE)
+nsc <- FindClusters(nsc, resolution = 0.8, verbose = FALSE)
+nsc$default_cluster <- nsc$seurat_clusters
+Idents(nsc) <- 'default_cluster'
+nsc_default_umap <- FetchData(nsc, vars = c('default_cluster', 'UMAP_1', 'UMAP_2')) %>%
+  shuffle_rows() %>%
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes_string(fill = 'default_cluster'),
+             color = 'black', pch = 21, size = 3) +
+  theme_bw() +
+  theme(legend.title = element_blank())
+nsc_default_umap
+```
+
+Identify marker genes:  
+
+```{r nsc_subtype_markers}
+Idents(nsc) <- 'default_cluster'
+deg <- FindAllMarkers(nsc, assay = 'RNA', only.pos = TRUE)
+top_genes <- deg %>%
+  group_by(cluster) %>%
+  top_n(n = 3, wt = -p_val_adj) %>%
+  ungroup()
+knitr::kable(x = top_genes, caption = 'Top 3 DE genes per cluster.')
+```
+
+```{r nsc_feature_umap}
+genes <- list(
+  'C0' = c('Dcx', 'Nfib', 'Stmn2', 'Tubb1', 'Sox11', 'Gad1'),
+  'C1' = c('Slc1a3', 'Fgfr3', 'Bcan', 'Clu', 'Gja1','Slc1a2'),
+  'C2' = c('Mki67', 'Pcna', 'Dlx2', 'Hnrnpab','Hmgn2'),
+  'C3' = c('Ascl1', 'Egfr', 'Lima1', 'Rpl12', 'Mfge8','Pcna','Rpl41')
+)
+
+make_plot <- function(i) {
+  feature_umap <- FetchData(nsc, vars = c(genes[[i]], 'UMAP_1', 'UMAP_2')) %>%
+    mutate(across(.cols = genes[[i]], 
+                  .fns = function(x) (x-min(x))/(max(x)-min(x))
+                  )) %>% 
+    reshape2::melt(id.vars = c('UMAP_1','UMAP_2')) %>% 
+    arrange(value) %>%
+    ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+    geom_point(mapping = aes(fill = value), pch = 21, color = 'black', size
+               = 3) +
+    facet_wrap(. ~ variable, ncol = length(genes[[i]])) + 
+    scale_fill_gradientn(colors = rev(x = RColorBrewer::brewer.pal(n = 11,
+                                                                   name =
+                                                                     'RdYlBu')), breaks = c(0, 1), labels = c('Min.', 'Max.')) +
+    theme(axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title = element_text(size = 12),
+          panel.background = element_rect(fill = NA, colour = 'black'),
+          panel.border = element_rect(fill = NA, color = 'black'),
+          legend.title = element_text(angle = 90),
+          plot.title = element_text(face = 'bold'),
+          strip.background = element_rect(fill = NA, color = NA)) +
+    guides(fill = guide_colorbar(
+      title = 'Expression',
+      ticks.colour = 'black',
+      frame.colour = 'black',
+      title.position = 'left'))
+  feature_umapX <- feature_umap +
+    remove_anno + 
+    theme(legend.position = 'none')
+  return(list('feature_umap' = feature_umap, 
+              'feature_umapX' = feature_umapX))
+}
+
+i <- 1
+tmp <- make_plot(i)
+svg(filename = paste0(results_out, 'NSC_', names(genes)[i], '-nsc-genes_umap.svg'), height = 2.5, width = 2.5*length(genes[[i]]) + 1)
+tmp$feature_umap
+dev.off()
+svg(filename = paste0(results_out, 'NSC_', names(genes)[i], '-nsc-genes_unlabeled.svg'), height = 2.5, width = 2.5*length(genes[[i]]))
+tmp$feature_umapX  
+dev.off()
+
+
+i <- 2
+tmp <- make_plot(i)
+svg(filename = paste0(results_out, 'NSC_', names(genes)[i], '-nsc-genes_umap.svg'), height = 2.5, width = 2.5*length(genes[[i]]) + 1)
+tmp$feature_umap
+dev.off()
+svg(filename = paste0(results_out, 'NSC_', names(genes)[i], '-nsc-genes_unlabeled.svg'), height = 2.5, width = 2.5*length(genes[[i]]))
+tmp$feature_umapX  
+dev.off()
+
+
+i <- 3
+tmp <- make_plot(i)
+svg(filename = paste0(results_out, 'NSC_', names(genes)[i], '-nsc-genes_umap.svg'), height = 2.5, width = 2.5*length(genes[[i]]) + 1)
+tmp$feature_umap
+dev.off()
+svg(filename = paste0(results_out, 'NSC_', names(genes)[i], '-nsc-genes_unlabeled.svg'), height = 2.5, width = 2.5*length(genes[[i]]))
+tmp$feature_umapX  
+dev.off()
+
+
+i <- 4
+tmp <- make_plot(i)
+svg(filename = paste0(results_out, 'NSC_', names(genes)[i], '-nsc-genes_umap.svg'), height = 2.5, width = 2.5*length(genes[[i]]) + 1)
+tmp$feature_umap
+dev.off()
+svg(filename = paste0(results_out, 'NSC_', names(genes)[i], '-nsc-genes_unlabeled.svg'), height = 2.5, width = 2.5*length(genes[[i]]))
+tmp$feature_umapX  
+dev.off()
+
+```
+
+```{r nsc_suptype_annotation}
+nsc$subtype <- plyr::mapvalues(
+  x = nsc$SCT_snn_res.0.8,
+  from = 0:3,
+  to = c('Neuroblast',
+         'Quiescent B Cell',
+         'C Cell',
+         'Activated B Cell')
+)
+nsc$subtype <- factor(x = nsc$subtype, 
+                      levels = c('Quiescent B Cell',
+                                 'Activated B Cell', 
+                                 'C Cell', 
+                                 'Neuroblast'))
+```
+
+
+```{r nsc_subtype_umap, fig.height=2.5, fig.width=5.75}
+feat <- 'subtype'
+nsc_umap <- FetchData(nsc, vars = c(feat, 'UMAP_1', 'UMAP_2')) %>%
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes_string(fill = feat),
+             color = 'black', pch = 21, size = 2.5) +
+  scale_fill_manual(values = nsc_cols)
+nsc_umapX <- nsc_umap + 
+  remove_anno +
+  theme(legend.position = 'none')
+# With legend
+svg(filename = paste0(results_out, 'NSC_subtype_umap.svg'),
+    height = 2.5, width = 5.75)
+nsc_umap
+dev.off()
+# Without legend
+svg(filename = paste0(results_out, 'NSC_subtype_umap_unlabeled.svg'),
+    height = 2.5, width = 3.75)
+nsc_umapX
+dev.off()
+ggsave(filename = paste0(results_out, 'NSC_subtype_umap_unlabeled.tiff'),
+       plot = nsc_umapX, device = 'tiff', height = 2.5, width = 3.75)
+nsc_umap
+```
+
+```{r nsc_subtype_time_umap, fig.height=2.5, fig.width=11.5}
+feat <- 'subtype'
+nsc_umap_time <- FetchData(nsc, vars = c(feat, 'orig.ident' ,'UMAP_1', 'UMAP_2')) %>%
+  shuffle_rows() %>%
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes_string(fill = feat),
+             color = 'black', pch = 21, size = 2.5) +
+  scale_fill_manual(values = nsc_cols) +
+  facet_grid(. ~ orig.ident) +
+  theme(strip.text = element_text(size = 12))
+nsc_umap_timeX <- nsc_umap_time + 
+  remove_anno +
+  theme(legend.position = 'none')
+# With legend
+svg(filename = paste0(results_out, 'NSC_subtype-time_umap.svg'),
+    height = 2.5, width = 11.5)
+nsc_umap_time
+dev.off() 
+# Without legend
+svg(filename = paste0(results_out, 'NSC_subtype-time_umap_unlabeled.svg'),
+    height = 2.5, width = 10.5)
+nsc_umap_timeX
+dev.off() 
+nsc_umap_time
+```
+
+```{r deg_heatmap, fig.height=7, fig.width=4, fig.cap='Heatmap of top 5 markers per cluster'}
+DefaultAssay(nsc) <- 'RNA'
+Idents(nsc) <- 'subtype'
+deg <- FindAllMarkers(nsc, assay = 'RNA', only.pos = TRUE)
+write.csv(deg, file = paste0(results_out, 'NSC_subtype_DEG.csv'))
+
+top_genes <- deg %>%
+  group_by(cluster) %>%
+  top_n(n = 8, wt = -p_val_adj) %>% 
+  .[['gene']] %>% 
+  unique()
+sig_genes <- deg %>%
+  filter(p_val_adj < 0.001) %>% 
+  .[['gene']] %>%
+  unique()
+
+Idents(nsc) <- 'subtype'
+DefaultAssay(nsc) <- 'RNA'
+avg_exp <- ScaleData(object = nsc[['SCT']]@data, features = top_genes)
+deg_heatmap <- cbind(data.frame(t(avg_exp)), 'ident' = nsc@active.ident) %>%
+  reshape2::melt(id.vars = 'ident') %>%
+  group_by(ident, variable) %>%
+  summarise(avg_exp = mean(value)) %>%
+  mutate(variable = factor(variable, levels = rev(levels(variable)))) %>%
+  ggplot(mapping = aes(x = ident, y = variable, fill = avg_exp)) +
+  geom_tile(color = 'black') +
+  scale_x_discrete(expand = c(0,0)) +
+  scale_y_discrete(expand = c(0,0)) +
+  scale_fill_gradient2(low = "#053061",
+                       high = "#B2182B",
+                       na.value ="#B2182B") +
+  theme(axis.text.x = element_text(angle = 45, size = 12, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_blank(),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)) +
+  guides(fill = guide_colorbar(
+    title = 'Expression\nz-score',
+    barwidth = 1.25, 
+    frame.colour = 'black', 
+    frame.linewidth = 0.5, 
+    ticks.colour = 'black',
+    ticks.linewidth = 0.5))
+deg_heatmapX <- deg_heatmap + 
+  remove_anno +
+  theme(legend.position = 'none')
+ggsave(filename = paste0(results_out, 'NSC_subtype-deg_heatmap.svg'),
+       plot = deg_heatmap, device = 'svg', height = 7, width = 4)
+ggsave(filename = paste0(results_out, 'NSC_subtype-deg_heatmap_unlabeled.svg'),
+       plot = deg_heatmapX, device = 'svg', height = 7, width = 2.75)
+deg_heatmap
+```
+
+
+```{r nsc_marker_expression, fig.height=7, fig.width=3}
+genes <- c('Sox2','Gfap','Ascl1','Dcx')
+rescale1 <- function(x) {
+  tmp <- (x - min(x)) / (max(x) - min(x))
+  return(tmp)
+}
+max_x <- max(nsc[['umap']]@cell.embeddings[,'UMAP_1'])
+max_y <- max(nsc[['umap']]@cell.embeddings[,'UMAP_2'])
+DefaultAssay(nsc) <- 'SCT'
+
+
+# With legends
+nsc_marker_umap <- FetchData(object = nsc, vars = c(genes), slot = 'data') |>
+  mutate(across(.cols = everything(), .fns = rescale1)) |>
+  cbind(nsc[['umap']]@cell.embeddings[,1:2]) |>
+  reshape2::melt(id.vars = c('UMAP_1','UMAP_2')) |>
+  dplyr::rename('gene' = 'variable',
+                'exp' = 'value') |>
+  dplyr::group_by(gene) |>
+  dplyr::arrange(exp) |>
+  ggplot() + 
+  geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = exp), size = 3) + 
+  geom_text(mapping = aes_string(x = max_x - 1, y = max_y - 1.5, label = 'gene'),
+            size = 5) +
+  scale_color_gradientn(colors = RColorBrewer::brewer.pal(n = 9, name = 'YlOrRd'),
+                       breaks = c(0, 1),
+                       labels = c('Min.', 'Max.')) +
+  facet_wrap(. ~ gene, ncol = 1) +
+  theme(panel.background = element_rect(color = 'black', fill = NA),
+        panel.border = element_rect(color = 'black', fill = NA),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        strip.background = element_blank(),
+        strip.text = element_blank(),
+        strip.placement = 'inside',
+        legend.position = 'bottom',
+        legend.direction = 'horizontal',
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 12)) +
+  guides(color = guide_colorbar(title = 'Expression',
+                                title.position = 'left',
+                                title.vjust = 0.5,
+                                barwidth = unit(x = 2, units = 'cm'),
+                                barheight = unit(x = 0.5, units = 'cm'),
+                                ticks = FALSE,
+                                frame.colour = 'black'))
+nsc_marker_umap
+svg(filename = paste0(results_out, 'NSC_subtype-markers_umap.svg'),
+    height = 7, width = 3)
+nsc_marker_umap
+dev.off()
+
+# Without legends
+nsc_marker_umapX <- FetchData(object = nsc, vars = c(genes), slot = 'data') |>
+  mutate(across(.cols = everything(), .fns = rescale1)) |>
+  cbind(nsc[['umap']]@cell.embeddings[,1:2]) |>
+  reshape2::melt(id.vars = c('UMAP_1','UMAP_2')) |>
+  dplyr::rename('gene' = 'variable',
+                'exp' = 'value') |>
+  dplyr::group_by(gene) |>
+  dplyr::arrange(exp) |>
+  ggplot() + 
+  geom_point(mapping = aes(x = UMAP_1, y = UMAP_2, color = exp), size = 3) + 
+  scale_color_gradientn(colors = RColorBrewer::brewer.pal(n = 9, name = 'YlOrRd'),
+                        breaks = c(0, 1),
+                        labels = c('Min.', 'Max.')) +
+  facet_wrap(. ~ gene, ncol = 1) +
+  remove_anno +
+  theme(strip.background = element_blank(),
+        strip.text = element_blank(),
+        legend.position = 'bottom',
+        legend.direction = 'horizontal',
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 12)) +
+  guides(color = guide_colorbar(title = 'Expression',
+                                title.position = 'left',
+                                title.vjust = 0.5,
+                                barwidth = unit(x = 2, units = 'cm'),
+                                barheight = unit(x = 0.5, units = 'cm'),
+                                ticks = FALSE,
+                                frame.colour = 'black'))
+svg(filename = paste0(results_out, 'NSC_subtype-markers_umap_unlabeled.svg'),
+    height = 7, width = 3)
+nsc_marker_umapX
+dev.off()
+ggsave(filename = paste0(results_out, 'NSC_subtype-markers_umap_unlabeled.tiff'),
+       plot = nsc_marker_umapX, device = 'tiff', height = 7, width = 3)
+
+```
+
+
+```{r marker_vln, fig.height=4, fig.width=15}
+deg <- read.csv(file = paste0(results_out, 'NSC_subtype_DEG.csv'))
+top_genes <- deg %>%
+  filter(!grepl(pattern = 'Rik', x = gene)) %>%
+  group_by(cluster) %>%
+  top_n(n = 4, wt = -p_val_adj)
+
+markers_vln <- vector(mode = 'list',
+                      length = length(levels(nsc$subtype)))
+names(markers_vln) <- levels(nsc$subtype)
+for (c in levels(nsc$subtype)) {
+  viz_genes <- top_genes$gene[top_genes$cluster == c]
+  markers_vln[[c]] <- FetchData(
+    object = nsc,
+    vars = c(viz_genes, 'subtype'),
+    slot = 'data'
+  ) %>%
+    reshape2::melt(id.vars = 'subtype') %>%
+    ggplot(mapping = aes(x = subtype, y = value)) +
+    geom_violin(mapping = aes(fill = subtype), 
+                color = 'black', 
+                scale = 'width') +
+    facet_wrap(. ~ variable, 
+               scales = 'free_y', 
+               ncol = 1, 
+               strip.position = 'left') +
+    scale_fill_manual(values = nsc_cols) +
+    scale_y_continuous(position = 'right') +
+    ylab(label = 'Normalized expression') +
+    theme(panel.background = element_rect(fill = NA, color = 'black'),
+          panel.border = element_rect(fill = NA, color = 'black'),
+          legend.position = 'none',
+          strip.background = element_rect(fill = NA, color = NA),
+          strip.text.y.left = element_text(angle = 0, size = 12),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.title.y.right = element_text(size = 12),
+          axis.title.x = element_blank(),
+          axis.text.x = element_text(size = 12, angle = 45, hjust = 1))
+}
+markers_vln <- cowplot::plot_grid(plotlist = markers_vln, ncol = 5)
+
+svg(filename = paste0(results_out, 'NSC_DEG_violin.svg'),
+    height = 4, width = 15)
+markers_vln + remove_anno
+dev.off()
+markers_vln + remove_anno
+```
+
+
+```{r nsc_summed_exp_umap, fig.width=17, fig.height=2.5}
+Idents(nsc) <- 'subtype'
+DefaultAssay(nsc) <- 'RNA'
+gene1 <- c('Ascl1')
+gene2 <- c('Mki67', 'Bcl2', 'Ccnd2', 'Gas6')
+markers_umap <- vector(mode = 'list', length = length(gene2))
+names(markers_umap) <- gene2
+for (i in gene2) {
+  exp_sum <- Matrix::colSums(nsc[['RNA']]@data[c(gene1, i),])
+  exp_sum <- (exp_sum - min(exp_sum)) / (max(exp_sum) - min(exp_sum))
+  plot_dat <- data.frame(cbind(exp_sum, nsc[['umap']]@cell.embeddings))
+  markers_umap[[i]] <- plot_dat %>%
+    arrange(exp_sum) %>%
+    ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+    geom_point(mapping = aes(fill = exp_sum),
+               color = 'black',
+               pch = 21,
+               size = 4) +
+    labs(title = paste0(gene1, ', ', i)) +
+    scale_fill_gradientn(colors = rev(RColorBrewer::brewer.pal(n = 11, name = 'RdYlBu')),
+                         breaks = c(0, 1),
+                         labels = c('Min.', 'Max.')) +
+    theme(axis.text = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title = element_text(size = 12),
+          panel.background = element_rect(fill = NA, colour = 'black'),
+          panel.border = element_rect(fill = NA, color = 'black'),
+          legend.title = element_text(angle = 90),
+          plot.title = element_text(face = 'bold')) +
+    guides(fill = guide_colorbar(
+      title = 'Sum of expression',
+      ticks.colour = 'black',
+      frame.colour = 'black',
+      title.position = 'left'))
+}
+sum_exp_legend <- cowplot::get_legend(plot = markers_umap[[1]])
+markers_umap <- lapply(
+  X = markers_umap, 
+  FUN = function(x) {
+    x <- x + 
+      theme(legend.position = 'none')
+    return(x)
+  }
+)
+markers_umap[[length(markers_umap) + 1]] <- sum_exp_legend
+
+# With labels
+summed_umap <- cowplot::plot_grid(
+  plotlist = markers_umap, 
+  ncol = length(markers_umap),
+  rel_widths = c(rep(1, length(markers_umap) - 1), 0.5)
+)
+summed_umap
+svg(filename = paste0(results_out, 'nsc_deg-sumExp_umap.svg'),
+    height = 2.5, width = 17)
+summed_umap
+dev.off()
+
+# Without labels
+summed_umapX <- lapply(
+  X = markers_umap[1:(length(markers_umap) - 1)],
+  FUN = function(x) {
+    x <- x + 
+      remove_anno + 
+      theme(plot.title = element_blank(),
+            plot.subtitle = element_blank())
+  }
+)
+summed_umapX[[length(summed_umapX)+1]] <- sum_exp_legend
+summed_umapX <- cowplot::plot_grid(
+  plotlist = summed_umapX, 
+  ncol = length(summed_umapX),
+  rel_widths = c(rep(1, length = length(summed_umapX) - 1), 0.5)
+)
+# summed_umapX
+svg(filename = paste0(results_out, 'nsc_deg-sumExp_umap_unlabeled.svg'),
+    height = 2.5, width = 17.5)
+summed_umapX
+dev.off()
+ggsave(filename = paste0(results_out, 'nsc_deg-sumExp_umap_unlabeled.tiff'),
+       plot = summed_umapX, device = 'tiff', height = 2.5, width = 17.5)
+```
+
+
+
+```{r nsc_umap_timepoint, fig.height=6.5, fig.width=4}
+dat <- expand.grid('display_time' = levels(nsc$orig.ident),
+                   'barcode' = colnames(nsc),
+                   stringsAsFactors = FALSE)
+dat$real_time <- sapply(strsplit(x = dat$barcode, split = '_'), `[`, 1)
+dat$display <- ifelse(test = dat$display_time == dat$real_time, 
+                      yes = 'A',
+                      no = 'B')
+ind_match <- match(x = dat$barcode,
+                   table = rownames(nsc[['umap']]@cell.embeddings))
+dat$UMAP_1 <- nsc[['umap']]@cell.embeddings[ind_match, 'UMAP_1']
+dat$UMAP_2 <- nsc[['umap']]@cell.embeddings[ind_match, 'UMAP_2']
+dat$real_time <- factor(x = dat$real_time, levels = c('SCtrl', 'S1d', 'S7d'))
+dat$display_time <- factor(x = dat$display_time, levels = c('SCtrl', 'S1d', 'S7d'))
+
+max_x <- max(nsc[['umap']]@cell.embeddings[,'UMAP_1'])
+max_y <- max(nsc[['umap']]@cell.embeddings[,'UMAP_2'])
+nsc_time_umap <- dat |>
+  arrange(desc(display)) |>
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(mapping = aes(color = display), size = 3) + 
+  facet_wrap(display_time ~ ., strip.position = 'left', ncol = 1) +
+  scale_color_manual(values = c('A' = 'red2', 'B' = 'grey80')) +
+  theme(panel.background = element_rect(color = NA, fill = NA),
+        panel.border = element_rect(color = NA, fill = NA),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y.left = element_text(size = 12, angle = 0),
+        legend.position = 'none')
+
+# With legend
+nsc_time_umap
+svg(filename = paste0(results_out, 'NSC_timepoint_umap.svg'),
+    height = 6.5, width = 4.5)
+nsc_time_umap
+dev.off()
+
+# Without legend
+nsc_time_umapX <- dat |>
+  arrange(desc(display)) |>
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(mapping = aes(color = display), size = 3) + 
+  facet_wrap(display_time ~ ., strip.position = 'left', ncol = 1) +
+  scale_color_manual(values = c('A' = 'red2', 'B' = 'grey80')) +
+  theme(panel.background = element_rect(color = NA, fill = NA),
+        panel.border = element_rect(color = NA, fill = NA),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        strip.background = element_blank(),
+        strip.text.y.left = element_blank(),
+        legend.position = 'none')
+# nsc_time_umapX
+svg(filename = paste0(results_out, 'NSC_timepoint_umap_unlabeled.svg'),
+    height = 6.5, width = 4)
+nsc_time_umapX
+dev.off()
+ggsave(filename = paste0(results_out, 'NSC_timepoint_umap_unlabeled.tiff'),
+       plot = nsc_time_umapX, device = 'tiff', height = 6.5, width = 4)
+```
+
+
+
+```{r nsc_proportions, fig.height=3, fig.width=4.5}
+Idents(nsc) <- 'subtype'
+counts <- data.frame(table(Idents(nsc), nsc$orig.ident))
+names(counts) <- c('subtype','orig.ident','count')
+write.csv(file = paste0(results_out, 'NSC_subtype_cell-counts.csv'),
+          x = counts)
+props <- counts %>% 
+  ggplot(mapping = aes(x = orig.ident, y = count, group = subtype)) + 
+  geom_bar(aes(fill = subtype), stat = 'identity', color = 'black', size = 0.75, position = 'fill') +
+  scale_fill_manual(values = nsc_cols) +
+  scale_y_continuous() + 
+  scale_x_discrete() +
+  ylab('% of cells')
+
+# With legend
+props
+svg(filename = paste0(results_out, 'NSC_subtype-proportion_bar.svg'),
+    height = 3, width = 4.5)
+props
+dev.off() 
+
+# Without legend
+propsX <- props + 
+  remove_anno + 
+  theme(axis.line = element_line(),
+        axis.ticks = element_line(),
+        legend.position = 'none')
+# propsX
+svg(filename = paste0(results_out, 'NSC_subtype-proportion_bar_unlabeled.svg'),
+    height = 3, width = 2.5)
+propsX
+dev.off() 
+```
+
+
+```{r nsc_trajectory_inference}
+nsc_sce <- SingleCellExperiment(assays = list(counts = nsc[['RNA']]@counts))
+colData(nsc_sce) <- cbind(colData(nsc_sce), nsc@meta.data)
+nsc_pca <- slot(slot(nsc, 'reductions')[['pca']], 'cell.embeddings')
+nsc_umap <- slot(slot(nsc, 'reductions')[['umap']], 'cell.embeddings')
+npcs <- 1:2
+nsc_pca <- nsc_pca[,npcs]
+nsc_umap <- nsc_umap
+reducedDim(nsc_sce, type = 'UMAP') <- nsc_umap
+nsc_sce <- slingshot(data = nsc_sce, 
+                     clusterLabels = 'subtype', 
+                     reducedDim = 'UMAP',
+                     start.clus = 'Quiescent B Cell')
+nsc_sds <- SlingshotDataSet(nsc_sce)
+saveRDS(object = list('nsc_sce' = nsc_sce,
+                      'nsc_sds' = nsc_sds),
+        file = paste0(results_out, 'NSC_slingshot-results.rds'))
+```
+
+
+```{r nsc_trajectory_plotting}
+nsc$pseudotime <- nsc_sce$slingPseudotime_1
+ptime <- data.frame(nsc_sds@curves$Lineage1$s)
+ptime$pseudotime <- 1:nrow(ptime)
+max_pt <- max(ptime$pseudotime)
+min_pt <- min(ptime$pseudotime)
+nsc_curve <- FetchData(
+  object = nsc,
+  vars = c('UMAP_1','UMAP_2','pseudotime')
+) |> 
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(color = 'grey80', size = 4) +
+  geom_line(data = ptime, mapping = aes(color = pseudotime), lwd = 4, lineend = 'round') +
+  scale_color_viridis_c(option = 'D',
+                        breaks = c(min_pt, max_pt),
+                        labels = c('Early','Late')) +
+  theme(panel.background = element_rect(color = NA, fill = NA),
+        panel.border = element_rect(color = NA, fill = NA),
+        axis.ticks = element_blank(),
+        axis.text = element_blank(),
+        axis.title = element_blank(),
+        strip.background = element_blank(),
+        strip.text = element_blank(),
+        strip.placement = 'inside',
+        legend.position = c(0.75, 0.8),
+        legend.direction = 'horizontal',
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 12)) +
+  guides(color = guide_colorbar(barwidth = unit(x = 2.5, units = 'cm'),
+                                barheight = unit(x = 0.5, units = 'cm'),
+                                ticks = FALSE,
+                                title.position = 'top',
+                                title.hjust = 0.5,
+                                title = 'Pseudotime'))
+nsc_curve
+svg(filename = paste0(results_out, 'NSC_pseudotime-curve_umap.svg'),
+    height = 2.5, width = 4)
+nsc_curve
+dev.off()
+ggsave(filename = paste0(results_out, 'NSC_pseudotime-curve_umap.tiff'),
+       plot = nsc_curve, device = 'tiff', height = 2.5, width = 4)
+```
+
+
+```{r save_data}
+saveRDS(nsc, file = '../data/nsc.rds')
+```
+
+```{r session_info}
+sessionInfo()
+```
+

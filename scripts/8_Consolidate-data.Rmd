@@ -1,0 +1,49 @@
+---
+title: "8: Consolidate data"
+author: "James Choi"
+date: "Last compiled:`r Sys.Date()`"
+output: 
+  html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, fig.align='center', 
+                      tidy.opts=list(width.cutoff=60), tidy=TRUE)
+```
+
+```{r libraries}
+require('Seurat')
+require('ggplot2')
+require('dplyr')
+```
+
+
+```{r load_data}
+svz <- readRDS(file = '../data/svz.rds')
+mg <- readRDS(file = '../data/mg.rds')
+nsc <- readRDS(file = '../data/nsc.rds')
+```
+
+```{r subtype_info}
+mg_subtype <- mg@meta.data[c('subtype')]
+mg_subtype$subtype <- paste(as.character(mg_subtype$subtype), 'MG')
+nsc_subtype <- nsc@meta.data[c('subtype')]
+nsc_subtype$subtype <- as.character(nsc_subtype$subtype)
+subtype <- rbind(mg_subtype, nsc_subtype)
+svz$subtype <- NA
+svz_index <- match(rownames(subtype), colnames(svz))
+svz$subtype[svz_index] <- subtype$subtype
+svz$subtype[is.na(svz$subtype)] <- as.character(
+  x = svz$celltype[is.na(svz$subtype)]
+)
+table(svz$subtype)
+```
+
+```{r save_data}
+svz_obs <- svz@meta.data
+svz_X <- svz[['RNA']]@counts
+svz_vars <- svz[['SCT']]@meta.features
+svz_misc <- svz[['SCT']]@SCTModel.list$model1
+save(svz_obs, svz_vars, svz_X, svz_misc, file = '../data/svz_lite.Rdata')
+```
+

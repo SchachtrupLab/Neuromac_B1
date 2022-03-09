@@ -411,7 +411,7 @@ for(t in levels(sci$Time)) {
   }
 }
 for(g in my.genes) {
-  my.plots[[g]] <- 
+  my.plots[[g]] <- {}
 }
 
 for(g in my.genes) {

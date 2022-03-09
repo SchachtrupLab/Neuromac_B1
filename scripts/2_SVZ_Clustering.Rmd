@@ -1,0 +1,480 @@
+---
+title: "2_SVZ_Clustering"
+author: "James Choi"
+date: "Last compiled on: `r Sys.Date()`"
+output:
+  html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, message=FALSE, fig.align='center', 
+                      tidy.opts=list(width.cutoff=60), tidy=TRUE,
+                      results='hold')
+```
+
+```{r directory_setup}
+if(!grepl('scripts', getwd())) {setwd('scripts')}
+results_out <- '../results/2_SVZ_Clustering/'
+dir.create(path = results_out)
+```
+
+```{r libraries}
+require('Seurat')
+require('ggplot2')
+require('dplyr')
+set.seed(123)
+```
+
+```{r params_utils}
+shuffle_rows <- function(x) return(x[sample(1:nrow(x), size = nrow(x)),])
+firstup <- function(x) {
+  x <- tolower(x)
+  substr(x, 1, 1) <- toupper(substr(x, 1, 1))
+  return(x)
+}
+remove_anno <- theme(panel.background = element_rect(color = NA, fill = NA),
+                     panel.border = element_rect(color = NA, fill = NA),
+                     panel.grid = element_blank(),
+                     axis.title = element_blank(),
+                     axis.text = element_blank(),
+                     axis.ticks = element_blank(),
+                     legend.title = element_blank(),
+                     legend.key = element_blank(),
+                     legend.background = element_blank())
+svz_cols <-  c('NSC' = '#f58231',
+               'Microglia' = '#4363d8',
+               'Unknown/Ependymal' = '#ffe119')
+```
+
+```{r load_data}
+# This Seurat object contains all cells passed quality control.  
+svz <- readRDS(file = '../data/SVZ_qcfiltered.rds')
+```
+
+```{r variable_features, fig.height=2.75, fig.width=5}
+DefaultAssay(svz) <- 'RNA'
+svz <- NormalizeData(svz, verbose = FALSE)
+svz <- CellCycleScoring(
+  object = svz,
+  s.features = intersect(firstup(cc.genes$s.genes), rownames(svz)),
+  g2m.features = intersect(firstup(cc.genes$g2m.genes), rownames(svz))
+)
+svz$CC.difference <- svz$S.Score - svz$G2M.Score
+svz <- SCTransform(svz, 
+                   assay = 'RNA', 
+                   variable.features.n = 2000, 
+                   vars.to.regress = 'CC.difference', 
+                   verbose = FALSE)
+VariableFeaturePlot(svz) + theme_bw()
+```
+
+```{r pca_elbow, fig.height=2.5, fig.width=4}
+svz <- RunPCA(svz, npcs = 40, verbose = FALSE)
+ElbowPlot(svz, ndims = 40) + theme_bw()
+```
+
+
+```{r pca_iteration, fig.height=6, fig.width=17, fig.cap="UMAPs using varying number of PCs"}
+test_pcs <- 10:19
+umaps <- vector(mode = "list", length = length(test_pcs))
+for (i in 1:length(test_pcs)) {
+  svz <- FindNeighbors(svz, dims = 1:test_pcs[i], verbose = FALSE)
+  svz <- FindClusters(svz, resolution = 0.8, verbose = FALSE)
+  svz <- RunUMAP(svz, dims = 1:test_pcs[i], verbose = FALSE)
+  umaps[[i]] <- DimPlot(svz, pt.size = 1, label = TRUE, label.size = 6) +
+    theme_bw() + labs(title = paste("# PCs:", test_pcs[i])) +
+    theme(legend.position = 'none',
+          axis.text = element_blank(),
+          axis.ticks = element_blank())
+}
+umaps <- cowplot::plot_grid(plotlist = umaps, ncol = length(test_pcs)/2)
+umaps
+```
+
+UMAPs with varying number of PCs and high resolution shows that the small
+group of cells successfully clusters out using lower number of PCs (10-12). 
+To better choose PCs, we look at gene loadings for each component:  
+
+
+```{r dimloadings, fig.height=4.5, fig.width=8}
+VizDimLoadings(svz, dims = 9:12, nfeatures = 30, ncol = 4)
+```
+
+We also inspect the distrbution of cells along thesse components:  
+
+```{r pca_plots, fig.height=3.5, fig.width=12}
+p1 <- DimPlot(svz, pt.size = 2, reduction = 'pca', dims = c(10,11))
+p2 <- DimPlot(svz, pt.size = 2, reduction = 'pca', dims = c(10,12))
+p3 <- DimPlot(svz, pt.size = 2, reduction = 'pca', dims = c(11,12))
+p1 | p2 | p3
+```
+
+
+```{r svz_umap, fig.height=3.5, fig.width=4.5}
+svz <- FindNeighbors(svz, dims = 1:10, verbose = FALSE)
+svz <- RunUMAP(svz, dims = 1:10, verbose = FALSE)
+svz <- FindClusters(svz, verbose = FALSE)
+svz$default_cluster <- svz$seurat_clusters
+Idents(svz) <- 'default_cluster'
+svz_default_umap <- FetchData(svz, vars = c('default_cluster', 'UMAP_1', 'UMAP_2')) %>%
+  shuffle_rows() %>%
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes_string(fill = 'default_cluster'),
+             color = 'black', pch = 21, size = 3) +
+  theme_bw() +
+  theme(legend.title = element_blank())
+svz_default_umapX <- svz_default_umap +
+  remove_anno +
+  theme(legend.position = 'none')
+ggsave(filename = paste0(results_out, 'SVZ_defaultClusters_umap.svg'),
+       plot = svz_default_umap, device = 'svg', height = 3.5, width = 4.5)
+ggsave(filename = paste0(results_out, 'SVZ_defaultClusters_umap_unlabeled.svg'),
+       plot = svz_default_umapX, device = 'svg', height = 3.5, width = 3.5)
+svz_default_umapX
+```
+
+Identify marker genes for each cluster to help classify as MG or NSC.  
+
+```{r marker_table}
+Idents(svz) <- 'default_cluster'
+deg <- FindAllMarkers(svz, assay = 'RNA', only.pos = TRUE)
+top_genes <- deg %>%
+  group_by(cluster) %>%
+  top_n(n = 3, wt = -p_val_adj) %>%
+  ungroup()
+knitr::kable(x = top_genes, caption = 'Top 3 DE genes per cluster.')
+write.csv(deg, file = paste0(results_out, 'SVZ_defaultCluster_DEG.csv'))
+```
+
+
+```{r deg_heatmap, fig.height=7.75, fig.width=5.25, fig.cap='Heatmap of top 5 markers per cluster'}
+top_genes <- deg %>%
+  group_by(cluster) %>%
+  top_n(n = 5, wt = -p_val_adj) %>% 
+  .[['gene']] %>% 
+  unique()
+sig_genes <- deg %>%
+  filter(p_val_adj < 0.001) %>% 
+  .[['gene']] %>%
+  unique()
+
+Idents(svz) <- 'default_cluster'
+DefaultAssay(svz) <- 'SCT'
+avg_exp <- ScaleData(object = svz[['SCT']]@data, features = top_genes)
+deg_heatmap <- cbind(data.frame(t(avg_exp)), 'ident' = svz@active.ident) %>%
+  reshape2::melt(id.vars = 'ident') %>%
+  group_by(ident, variable) %>%
+  summarise(avg_exp = mean(value)) %>%
+  mutate(variable = factor(variable, levels = rev(levels(variable)))) %>%
+  ggplot(mapping = aes(x = ident, y = variable, fill = avg_exp)) +
+  geom_tile(color = 'black') +
+  scale_x_discrete(expand = c(0,0)) +
+  scale_y_discrete(expand = c(0,0)) +
+  scale_fill_gradient2(low = "#053061",
+                       high = "#B2182B",
+                       limits = c(NA, 3),
+                       na.value ="#B2182B") +
+  theme(axis.text.x = element_text(angle = 0, size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_blank(),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 12)) +
+  guides(fill = guide_colorbar(
+    title = 'Expression\nz-score',
+    barwidth = 1.25, 
+    frame.colour = 'black', 
+    frame.linewidth = 0.5, 
+    ticks.colour = 'black',
+    ticks.linewidth = 0.5))
+deg_heatmapX <- deg_heatmap + 
+  remove_anno +
+  theme(legend.position = 'none')
+ggsave(filename = paste0(results_out, 'SVZ_defaultCluster-deg_heatmap.svg'),
+       plot = deg_heatmap, device = 'svg', height = 7.75, width = 5.25)
+ggsave(filename = paste0(results_out, 'SVZ_defaultCluster-deg_heatmap_unlabeled.svg'),
+       plot = deg_heatmapX, device = 'svg', height = 7.75, width = 4.75)
+deg_heatmap
+```
+
+Generate violin plots of common microglia and myeloid-associated genes. Gene
+products of some of these genes are commonly targeted epitopes for antibodies
+(e.g. Adgre == F4/80, Ptprc = CD11b, Mrc1 = CD206).  
+
+```{r myeloid_marker_umap, fig.height=8, fig.width=13.5, fig.cap='Myeloid gene expression overlaid on SVZ UMAPs.'}
+myeloid_genes <- unique(c('P2ry12','Tmem119','Cx3cr1','Csf1r','Adgre1','Ptprc','Ly6c2','Ccr2','Mrc1','Lyve1','Mki67','Top2a', 'Fcrls', 'Siglech', 'Olfml3', 'Gpr34', 'Trem2', 'Hexb'))
+Idents(svz) <- 'default_cluster'
+DefaultAssay(svz) <- 'RNA'
+myeloid_umap <- FeaturePlot(
+  object = svz,
+  features = myeloid_genes,
+  cols = c('grey85','blue3'),
+  slot = 'data',
+  combine = FALSE,
+  order = TRUE
+)
+myeloid_umap <-  lapply(
+  X = myeloid_umap,
+  FUN = function(x) {
+    x +
+      theme_bw() +
+      guides(color = guide_colorbar(frame.colour = 'black',
+                                    ticks.colour = 'black',
+                                    barheight = unit(2, 'cm'),
+                                    barwidth = unit(0.5, 'cm')))
+  }
+)
+myeloid_umapX <- lapply(
+  X = myeloid_umap,
+  FUN = function(x) {
+    x <- x +
+      remove_anno +
+      theme(axis.line = element_blank(),
+            legend.position = 'none')
+    return(x)
+  }
+)
+myeloid_umap <- cowplot::plot_grid(plotlist = myeloid_umap)
+myeloid_umapX <- cowplot::plot_grid(plotlist = myeloid_umapX)
+ggsave(filename = paste0(results_out, 'SVZ_myeloid-genes_umap.svg'),
+       plot = myeloid_umap, device = 'svg', height = 8, width = 13)
+ggsave(filename = paste0(results_out, 'SVZ_myeloid-genes_umap_unlabeled.svg'),
+       plot = myeloid_umapX, device = 'svg', height = 8, width = 10)
+
+myeloid_umap
+```
+
+```{r}
+myeloid_genes <- unique(c('P2ry12','Tmem119','Cx3cr1','Csf1r','Adgre1','Ptprc','Ly6c2','Ccr2','Mrc1','Lyve1','Mki67','Top2a', 'Fcrls', 'Siglech', 'Olfml3', 'Gpr34', 'Trem2', 'Hexb'))
+Idents(svz) <- 'default_cluster'
+DefaultAssay(svz) <- 'RNA'
+myeloid_umap <- lapply(
+  X = myeloid_genes,
+  FUN = function(x) {
+    tmp <- FetchData(svz, c(x, 'UMAP_1', 'UMAP_2'))
+    tmp[order(tmp[[x]]),] %>% 
+      ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+      geom_point(mapping = aes_string(fill = x),
+                 pch = 21, size = 3) +
+      theme_bw() +
+      scale_fill_gradient(low = 'grey90', high = 'blue2') +
+      guides(fill = guide_colorbar(frame.colour = 'black',
+                                    ticks.colour = 'black',
+                                    barheight = unit(2, 'cm'),
+                                    barwidth = unit(0.5, 'cm'))) +
+      remove_anno +
+      theme(axis.line = element_blank(),
+            legend.position = 'none')
+  }
+)
+myeloid_umap[[1]]
+for (i in 1:length(myeloid_umapX)) {
+  ggsave(
+    filename = paste0(results_out, 'SVZ_myeloid-', 
+                      myeloid_genes[i], '_umap_unlabeled.tiff'),
+    plot = myeloid_umap[[i]], device = 'tiff', height = 4, width = 4)
+}
+```
+
+Plot UMAPs of NSC gene expression to better visualize spread of detection
+over all cells.  
+
+```{r nsc_marker_umap, fig.height=11, fig.width=13.5, fig.cap='NSC gene expression overlaid on SVZ UMAPs.'}
+nsc_genes <- unique(c('Gfap','Sox2','Dcx','Ascl1','Sox9','Id3','Id4','Foxm1','Egfr', 'Mki67','Top2a','Dlx1','Dlx2','Fos','Dcx', 'Nfib', 'Stmn2', 'Sox11', 'Gad1','Slc1a3', 'Fgfr3', 'Bcan', 'Clu', 'Gja1','Slc1a2','Mki67', 'Pcna', 'Dlx2', 'Hnrnpab','Hmgn2','Ascl1', 'Egfr', 'Lima1', 'Rpl12', 'Mfge8','Pcna','Rpl41'))
+
+Idents(svz) <- 'default_cluster'
+DefaultAssay(svz) <- 'RNA'
+nsc_umap <- FeaturePlot(
+  object = svz,
+  features = nsc_genes,
+  cols = c('grey85','blue3'),
+  slot = 'data',
+  combine = FALSE,
+  order = TRUE
+)
+nsc_umap <-  lapply(
+  X = nsc_umap,
+  FUN = function(x) {
+    x +
+      theme_bw() +
+      guides(color = guide_colorbar(frame.colour = 'black',
+                                    ticks.colour = 'black',
+                                    barheight = unit(2, 'cm'),
+                                    barwidth = unit(0.5, 'cm')))
+  }
+)
+nsc_umapX <- lapply(
+  X = nsc_umap,
+  FUN = function(x) {
+    x <- x +
+      remove_anno +
+      theme(axis.line = element_blank(),
+            legend.position = 'none')
+    return(x)
+  }
+)
+
+nsc_umap1 <- cowplot::plot_grid(plotlist = nsc_umap[1:16])
+nsc_umap1X <- cowplot::plot_grid(plotlist = nsc_umapX[1:16])
+nsc_umap2 <- cowplot::plot_grid(plotlist = nsc_umap[17:length(nsc_genes)])
+nsc_umap2X <- cowplot::plot_grid(plotlist = nsc_umapX[17:length(nsc_genes)])
+
+ggsave(filename = paste0(results_out, 'SVZ_nsc-genes1_umap.svg'),
+       plot = nsc_umap1, device = 'svg', height = 9.5, width = 11.5)
+ggsave(filename = paste0(results_out, 'SVZ_nsc-genes1_umap_unlabeled.svg'),
+       plot = nsc_umap1X, device = 'svg', height = 9.5, width = 9)
+ggsave(filename = paste0(results_out, 'SVZ_nsc-genes2_umap.svg'),
+       plot = nsc_umap2, device = 'svg', height = 9.5, width = 11.5)
+ggsave(filename = paste0(results_out, 'SVZ_nsc-genes2_umap_unlabeled.svg'),
+       plot = nsc_umap2X, device = 'svg', height = 9.5, width = 9)
+
+nsc_umap1 | nsc_umap2
+```
+
+We can also compare the data with a previously published study on NSCs vs 
+ependymal cells in V-SVZ by [Shah, Stratton, et al.](https://doi.org/10.1016/j.cell.2018.03.063).
+Specifically, we refer to Figure 3. Acta2 and Foxj1 are unique to ependymal
+cells. Interestingly, they also note a small Flt1(+) population that we also
+identified in the initial clustering of all SVZ cells.
+
+```{r misc_genes, fig.height=5, fig.width=9}
+ependymal_genes <- c('Foxj1','Cfap126','Ccdc153', 'Tmem212', 'Flt1', 'Pecam1')
+Idents(svz) <- 'default_cluster'
+DefaultAssay(svz) <- 'RNA'
+ependymal_umap <- FeaturePlot(
+  object = svz,
+  features = ependymal_genes,
+  cols = c('grey85','blue3'),
+  slot = 'data',
+  combine = FALSE,
+  order = TRUE
+)
+ependymal_umap <-  lapply(
+  X = ependymal_umap,
+  FUN = function(x) {
+    x +
+      theme_bw() +
+      guides(color = guide_colorbar(frame.colour = 'black',
+                                    ticks.colour = 'black',
+                                    barheight = unit(2, 'cm'),
+                                    barwidth = unit(0.5, 'cm')))
+  }
+)
+ependymal_umapX <- lapply(
+  X = ependymal_umap,
+  FUN = function(x) {
+    x <- x +
+      remove_anno +
+      theme(axis.line = element_blank(),
+            legend.position = 'none')
+    return(x)
+  }
+)
+ependymal_umap <- cowplot::plot_grid(plotlist = ependymal_umap)
+ependymal_umapX <- cowplot::plot_grid(plotlist = ependymal_umapX)
+ggsave(filename = paste0(results_out, 'SVZ_ependymal-genes_umap.svg'),
+       plot = ependymal_umap, device = 'svg', height = 5, width = 9)
+ggsave(filename = paste0(results_out, 'SVZ_ependymal-genes_umap_unlabeled.svg'),
+       plot = ependymal_umapX, device = 'svg', height = 5, width = 7)
+ependymal_umap
+```
+
+
+```{r assign_celltype}
+svz$celltype <- plyr::mapvalues(
+  x = svz$default_cluster,
+  from = 0:8,
+  to = c('Microglia', 'Microglia', 'NSC', 'NSC', 'Microglia', 'Microglia', 
+         'NSC', 'Microglia', 'Unknown/Ependymal')
+)
+```
+
+```{r celltype_umap}
+feat <- 'celltype'
+svz_umap <- FetchData(svz, vars = c(feat, 'UMAP_1', 'UMAP_2')) %>%
+  shuffle_rows() %>% 
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) + 
+  geom_point(mapping = aes_string(fill = feat),
+             color = 'black', pch = 21, size = 4) +
+  scale_fill_manual(values = c('NSC' = '#f58231',
+                               'Microglia' = '#4363d8',
+                               'Unknown/Ependymal' = '#ffe119'))
+
+# With legend
+svz_umap
+svg(filename = paste0(results_out, 'SVZ_celltype_umap.svg'),
+    height = 3.5, width = 5.5)
+svz_umap
+dev.off() 
+
+# Without legend
+svz_umapX <- svz_umap +
+  remove_anno + 
+  theme(legend.position = 'none')
+svg(filename = paste0(results_out, 'SVZ_celltype_umap_unlabeled.svg'),
+    height = 3.5, width = 4)
+svz_umapX
+dev.off()
+# TIFF
+tiff(filename = paste0(results_out, 'SVZ_celltype_umap_unlabeled.tiff'),
+     height = 3.5, width = 4, units = 'in', res = 440)
+svz_umapX
+dev.off() 
+```
+
+```{r celltype_heatmap, fig.height=8, fig.width=4}
+all_genes <- c(myeloid_genes, nsc_genes, ependymal_genes)
+expr_data <- ScaleData(svz[['RNA']]@data[all_genes,], scale.max = 4) %>% 
+  Matrix::t() %>% 
+  cbind(svz@meta.data['celltype']) %>%
+  group_by(celltype) %>%
+  summarise(across(.cols = all_of(all_genes), .fns = mean)) %>%
+  tibble::column_to_rownames(var = 'celltype') %>%
+  t()
+svz_heatmap <- ComplexHeatmap::Heatmap(
+  matrix = expr_data,
+  clustering_method_columns = 'ward.D2',
+  clustering_method_rows = 'ward.D2',
+  # col = heatmap_cols,
+  border = TRUE,
+  clustering_distance_rows = 'pearson',
+  clustering_distance_columns = 'pearson',
+  column_dend_height = unit(x = 15, units = 'mm'),
+  row_dend_width = unit(x = 15, units = 'mm'),
+  column_names_rot = 45,
+  rect_gp = grid::gpar(col = 'black'),
+  row_names_gp = grid::gpar(fontface = 'italic'),
+  heatmap_legend_param = list(
+    title = 'z-score',
+    title_gp = grid::gpar(fontsize = 12),
+    title_position = 'leftcenter-rot',
+    labels = c('Low', 0, 'High'),
+    at = c(min(expr_data), 0, max(expr_data)),
+    labels_gp = grid::gpar(fontsize = 10),
+    legend_height = unit(2.5, units = 'cm'),
+    grid_width = unit(0.5, units = 'cm'),
+    border = 'black',
+    title_gap = unit(1, units = 'cm'),
+    direction = 'vertical')
+)
+svg(filename = paste0(results_out, 'SVZ_celltype-marker_heatmap.svg'),
+    height = 8, width = 4)
+svz_heatmap_print <- cowplot::as_gtable(
+  plot = grid::grid.grabExpr(
+    expr = ComplexHeatmap::draw(
+      object = svz_heatmap,
+      padding = grid::unit(c(2,8,2,2),units = 'mm')
+    )
+  )
+)
+plot(svz_heatmap_print)
+dev.off()
+```
+
+```{r save_data}
+saveRDS(svz, file = '../data/svz.rds')
+```
+
+```{r session_info}
+sessionInfo()
+```
+

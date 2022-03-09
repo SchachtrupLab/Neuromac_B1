@@ -2,16 +2,39 @@
 .Rhistory
 .RData
 .Ruserdata
-results/*
-data/*
-ref/*
-tutorial/*
-*.png
-*.tiff
-*.svg
-*.pdf
-*.pptx
-*.docx
-*.csv
-*.txt
-*.rds
+
+# Result figures and tables
+results/deprecated/**
+results/**/*.tif
+results/**/*.tiff
+results/**/*.png
+results/**/*.svg
+results/**/*.csv
+results/**/*.pdf
+results/**/*.rds
+results/**/*.pptx
+results/[0-9]{2,}*
+
+# Count data
+data/*.rds
+data/*.csv
+data/*.txt
+data/*.xlsx
+data/*.RData
+
+# Rendered markdown files
+scripts/*.html
+
+# Old script files
+scripts/drafting/**
+
+# Externally derived data
+ref/*.rds
+ref/GSE*
+
+# Misc
+renv/**
+tutorial/**
+/*.png
+/*.pptx
+/*.docx
