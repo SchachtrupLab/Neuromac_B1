@@ -568,68 +568,6 @@ mg_subset_sds <- slingshot::SlingshotDataSet(data = mg_subset_sce)
 ```
 
 
-```{r mg_trajectory_plot}
-curve_plot <- FetchData(object = mg_subset, 
-                        vars = c('subtype', 'UMAP_1', 'UMAP_2')) |>
-  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
-  geom_point(color = 'grey80', 
-             size = 4)
-ncurves <- length(slingCurves(mg_subset_sds))
-label_coords <- data.frame()
-plots <- list()
-for (i in 1:ncurves) {
-  curve <- data.frame(mg_subset_sds@curves[[i]]$s)[mg_subset_sds@curves[[i]]$ord,]
-  curve <- unique(curve)
-  curve$ptime <- 1:nrow(curve)
-  # label_coords <- curve[nrow(curve),c('UMAP_1','UMAP_2')]
-  # label_coords$label <- paste('Curve', i)
-  plots[[i]] <- curve_plot +
-    geom_path(data = curve, 
-              mapping = aes(x = UMAP_1, y = UMAP_2, color = ptime),
-              lwd = 3,
-              lineend = 'round') +
-    scale_color_viridis_c(option = "D",
-                          breaks = c(min(curve$ptime), max(curve$ptime)),
-                          labels = c('Early','Late')) +
-    # ggrepel::geom_text_repel(
-    #   data = label_coords,
-    #   mapping = aes(x = UMAP_1, y = UMAP_2, label = label),
-    #   size = 5
-    # ) +
-    # ggtitle(label = 'Slingshot pseudotime of microglia') +
-    ggtitle(label = paste('Curve', i)) +
-    # theme_bw() +
-    theme(panel.background = element_rect(color = NA, fill = NA),
-          panel.border = element_rect(color = NA, fill = NA),
-          axis.ticks = element_blank(),
-          axis.text = element_blank(),
-          axis.title = element_blank(),
-          strip.background = element_blank(),
-          strip.text = element_blank(),
-          strip.placement = 'inside',
-          legend.position = c(0.25, 0.8),
-          legend.direction = 'horizontal',
-          legend.title = element_text(size = 12),
-          legend.text = element_text(size = 12)) +
-    guides(color = guide_colorbar(override.aes = list(size = 6),
-                                  title.position = 'top',
-                                  title.hjust = 0.5,
-                                  title = paste('pseudotime')))
-}
-plots[[1]]
-plots[[2]]
-curve_plot <- (plots[[1]] | plots[[2]])
-curve_plot
-
-ggsave(
-  filename = paste0(results_out, 'MG_pseudotimeProjectedCurves_umap_unlabeled.tiff'),
-  plot = curve_plot,
-  device = 'tiff',
-  height = 4, width = 8
-)
-```
-
-
 ```{r mg_subset_umap_timepoint, fig.height=6.5, fig.width=4}
 dat <- expand.grid('display_time' = levels(mg_subset$orig.ident),
                    'barcode' = colnames(mg_subset),
