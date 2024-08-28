@@ -629,6 +629,256 @@ ggsave(
 )
 ```
 
+### Trajectory analysis with all clusters -------------------------------------
+
+Performed on 2024-01-25 by JSC for reviewer's comments
+
+
+```{r mg_subset, results='hide'}
+DefaultAssay(mg) <- 'SCT'
+Idents(mg) <- 'subtype'
+DimPlot(mg, label = TRUE)
+# mg_subset <- mg[, mg$subtype %in% c('Homeostatic', 'Activated', 'Disease-associated')]
+# mg_subset <- FindNeighbors(mg_subset, dims = 1:7)
+# mg_subset <- FindClusters(mg_subset, resolution = 0.8)
+# mg_subset <- RunUMAP(mg_subset, dims = 1:7, n.neighbors = 15)
+```
+
+```{r mg_compute_trajectory}
+mg_sce <- SingleCellExperiment::SingleCellExperiment(
+  assays = list('counts' = mg[['RNA']]@counts,
+                'logcounts' = mg[['RNA']]@data)
+)
+colData(mg_sce) <- DataFrame(mg@meta.data)
+mg_sce_umap <- mg[['umap']]@cell.embeddings
+reducedDim(mg_sce, type = 'UMAP') <- mg_sce_umap
+mg_sce <- slingshot::slingshot(
+  data = mg_sce, 
+  clusterLabels = 'subtype',
+  reducedDim = 'UMAP',
+  start.clus = 'Homeostatic',
+  approx_points = FALSE
+)
+mg_sds <- slingshot::SlingshotDataSet(data = mg_sce)
+```
+
+
+```{r mg_trajectory_plot}
+curve_plot <- FetchData(object = mg, 
+                        vars = c('subtype', 'UMAP_1', 'UMAP_2')) |>
+  ggplot(mapping = aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(color = 'grey80', 
+             size = 4)
+ncurves <- length(slingCurves(mg_sds))
+label_coords <- data.frame()
+plots <- list()
+for (i in 1:ncurves) {
+  curve <- data.frame(mg_sds@curves[[i]]$s)[mg_sds@curves[[i]]$ord,]
+  curve <- unique(curve)
+  curve$ptime <- 1:nrow(curve)
+  # label_coords <- curve[nrow(curve),c('UMAP_1','UMAP_2')]
+  # label_coords$label <- paste('Curve', i)
+  plots[[i]] <- curve_plot +
+    geom_path(data = curve, 
+              mapping = aes(x = UMAP_1, y = UMAP_2, color = ptime),
+              lwd = 3,
+              lineend = 'round') +
+    scale_color_viridis_c(option = "D",
+                          breaks = c(min(curve$ptime), max(curve$ptime)),
+                          labels = c('Early','Late')) +
+    # ggrepel::geom_text_repel(
+    #   data = label_coords,
+    #   mapping = aes(x = UMAP_1, y = UMAP_2, label = label),
+    #   size = 5
+    # ) +
+    # ggtitle(label = 'Slingshot pseudotime of microglia') +
+    ggtitle(label = paste('Curve', i)) +
+    # theme_bw() +
+    theme(panel.background = element_rect(color = NA, fill = NA),
+          panel.border = element_rect(color = NA, fill = NA),
+          axis.ticks = element_blank(),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_blank(),
+          strip.placement = 'inside',
+          legend.position = c(0.25, 0.15),
+          legend.direction = 'horizontal',
+          legend.background = element_rect(fill = NA),
+          legend.title = element_text(size = 12),
+          legend.text = element_text(size = 12)) +
+    guides(color = guide_colorbar(override.aes = list(size = 6),
+                                  title.position = 'top',
+                                  title.hjust = 0.5,
+                                  title = paste('Pseudotime')))
+}
+plots[[1]]
+plots[[2]]
+plots[[3]]
+curve_plot <- (plots[[1]] | plots[[2]] | plots[[3]])
+curve_plot
+
+ggsave(
+  filename = paste0(results_out, 'MG_pseudotimeProjectedCurves_Updated_umap_unlabeled.tiff'),
+  plot = curve_plot,
+  device = 'tiff',
+  height = 4, width = 12
+)
+```
+
+
+#### PCA-based
+
+Performed on 2024-01-25 by JSC for reviewer's comments
+
+
+```{r mg_subset, results='hide'}
+DefaultAssay(mg) <- 'SCT'
+Idents(mg) <- 'subtype'
+DimPlot(mg, label = TRUE)
+# mg = FindClusters(mg, resolution = 2)
+# DimPlot(mg, label = TRUE)
+# mg_subset <- mg[, mg$subtype %in% c('Homeostatic', 'Activated', 'Disease-associated')]
+# mg_subset <- FindNeighbors(mg_subset, dims = 1:7)
+# mg_subset <- FindClusters(mg_subset, resolution = 0.8)
+# mg_subset <- RunUMAP(mg_subset, dims = 1:7, n.neighbors = 15)
+```
+
+```{r mg_compute_trajectory}
+mg_sce <- SingleCellExperiment::SingleCellExperiment(
+  assays = list('counts' = mg[['RNA']]@counts,
+                'logcounts' = mg[['RNA']]@data)
+)
+colData(mg_sce) <- DataFrame(mg@meta.data)
+mg_sce_pca <- mg[['pca']]@cell.embeddings[,1:7]
+reducedDim(mg_sce, type = 'PCA') <- mg_sce_pca
+mg_sce_umap = mg[['umap']]@cell.embeddings
+reducedDim(mg_sce, type = 'UMAP') <- mg_sce_umap
+mg_sce <- slingshot::slingshot(
+  data = mg_sce, 
+  clusterLabels = 'subtype',
+  reducedDim = 'PCA',
+  start.clus = 'Homeostatic',
+  approx_points = FALSE
+)
+# mg_sce <- slingshot::slingshot(
+#   data = mg_sce, 
+#   clusterLabels = 'SCT_snn_res.2',
+#   reducedDim = 'PCA',
+#   start.clus = '3',
+#   approx_points = FALSE
+# )
+# head(mg_sce$slingPseudotime_1)
+```
+
+
+```{r mg_trajectory_plot}
+embedded_1 = embedCurves(mg_sce, newDimRed = 'UMAP')
+embedded_1 = slingCurves(embedded_1)[[1]]
+embedded_1 = data.frame(embedded_1$s[embedded_1$ord,])
+path1 = DimPlot(mg) + 
+  geom_path(data = embedded_1, aes(x = UMAP_1, y = UMAP_2), size = 1)
+path1
+
+embedded_2 = embedCurves(mg_sce, newDimRed = 'UMAP')
+embedded_2@metadata$curves[[2]]$s[embedded_2@metadata$curves[[2]]$ord,]
+embedded_2 = slingCurves(embedded_2)[[2]]
+embedded_2 = data.frame(embedded_2$s[embedded_2$ord,])
+path2 = DimPlot(mg) + 
+  geom_path(data = embedded_2, aes(x = UMAP_1, y = UMAP_2), size = 1) +
+  
+path2
+
+path1 | path2
+
+
+
+embedded_1 = embedCurves(mg_sce, newDimRed = 'UMAP')
+plotTSNE(sce.sling, colour_by="slingPseudotime_1") +
+    geom_path(data=embedded, aes(x=Dim.1, y=Dim.2), size=1.2)
+
+
+
+curve_plot <- FetchData(object = mg,
+                        vars = c('subtype', 'PC_3', 'PC_4')) |>
+  ggplot(mapping = aes(x = PC_3, y = PC_4)) +
+  geom_point(color = 'grey80', 
+             size = 4)
+ncurves <- length(slingCurves(mg_sds))
+label_coords <- data.frame()
+plots <- list()
+for (i in 1:ncurves) {
+  curve <- data.frame(mg_sds@curves[[i]]$s)[mg_sds@curves[[i]]$ord,]
+  curve <- unique(curve)
+  curve$ptime <- 1:nrow(curve)
+  # label_coords <- curve[nrow(curve),c('UMAP_1','UMAP_2')]
+  # label_coords$label <- paste('Curve', i)
+  plots[[i]] <- curve_plot +
+    geom_path(data = curve, 
+              mapping = aes(x = PC_3, y = PC_4, color = ptime),
+              lwd = 3,
+              lineend = 'round') +
+    scale_color_viridis_c(option = "D",
+                          breaks = c(min(curve$ptime), max(curve$ptime)),
+                          labels = c('Early','Late')) +
+    # ggrepel::geom_text_repel(
+    #   data = label_coords,
+    #   mapping = aes(x = UMAP_1, y = UMAP_2, label = label),
+    #   size = 5
+    # ) +
+    # ggtitle(label = 'Slingshot pseudotime of microglia') +
+    ggtitle(label = paste('Curve', i)) +
+    # theme_bw() +
+    theme(panel.background = element_rect(color = NA, fill = NA),
+          panel.border = element_rect(color = NA, fill = NA),
+          axis.ticks = element_blank(),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_blank(),
+          strip.placement = 'inside',
+          legend.position = c(0.25, 0.15),
+          legend.direction = 'horizontal',
+          legend.background = element_rect(fill = NA),
+          legend.title = element_text(size = 12),
+          legend.text = element_text(size = 12)) +
+    guides(color = guide_colorbar(override.aes = list(size = 6),
+                                  title.position = 'top',
+                                  title.hjust = 0.5,
+                                  title = paste('Pseudotime')))
+}
+length(plots)
+plots[[1]]
+plots[[2]]
+# plots[[3]]
+curve_plot <- (plots[[1]] | plots[[2]]) | PCAPlot(mg, pt.size = 2, dims = c(3,4))
+curve_plot
+
+ggsave(
+  filename = paste0(results_out, 'MG_pseudotimeProjectedCurves_Updated_umap_unlabeled.tiff'),
+  plot = curve_plot,
+  device = 'tiff',
+  height = 4, width = 12
+)
+```
+
+```{r}
+slingCurves(mg_sds)
+mg_sds@curves$Lineage1$s
+mg_sds@curves[[2]]$ord
+mg_sds@curves$Lineage1$dist_ind
+
+ncurves <- length(slingCurves(mg_sds))
+label_coords <- data.frame()
+plots <- list()
+for (i in 1:ncurves) {
+  curve <- data.frame(mg_sds@curves[[i]]$s)[mg_sds@curves[[i]]$ord,]
+  curve <- unique(curve)
+  curve$ptime <- 1:nrow(curve)
+```
+
+
+### ----------------------------------------------------------------------------
 
 ```{r mg_subset_umap_timepoint, fig.height=6.5, fig.width=4}
 dat <- expand.grid('display_time' = levels(mg_subset$orig.ident),

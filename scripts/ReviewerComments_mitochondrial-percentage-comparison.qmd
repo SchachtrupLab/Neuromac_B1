@@ -1,0 +1,701 @@
+---
+title: "Investigating mitochondrial transcripts in microglia sequenced with CEL-seq/CEL-seq2"
+author: "James Choi"
+date: "Last compiled: `r Sys.Date()`"
+format:
+  html:
+    code-fold: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    link-external-newwindow: true
+    fig-align: center
+editor: source
+execute: 
+  cache: false
+  warning: false
+  message: false
+project:
+  execute-dir: project
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = 'D:/MiamiProject/Schachtrup_Neuromac_B1/')
+```
+
+## James's response to Reviewer Comments:
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+svz = readRDS(file = 'data/svz.rds')
+mg = readRDS(file = 'data/mg.rds')
+nsc = readRDS(file = 'data/nsc.rds')
+
+results_out = 'results/ReviewerComments/'
+dir.create(path = results_out)
+```
+
+### Reviewer #1 (Remarks to the Author):
+
+> Comment 2. Do any of these groups represent M1 or M2 types? Is this what is meant by “The microglia clusters….related to microglia activation” (Page 6 line 107)?
+
+We explicitly queried microglial expression of genes associated with M1/M2 macrophage polarization. We referred to Table 2 of the [review article by Peter Murray](https://doi.org/10.1146/annurev-physiol-022516-034339). 
+
+Full reference:
+
+- Murray PJ. Macrophage Polarization. Annu Rev Physiol. 2017 Feb 10;79:541-566. doi: 10.1146/annurev-physiol-022516-034339. Epub 2016 Oct 21. PMID: 27813830.
+
+```{r}
+#| fig.height: 3.25
+#| fig.width: 6.25
+#| fig.cap: Dot plot of M1 macrophage-associated gene expression in SVZ microglia sub-types.
+m1panel = c('Il1a', 'Il1b', 'Il6', 'Il12a', 'Il12b', 'Il23a', 'Il27', 'Tnf', 'Csf3', 'Csf2', 'Nfkbiz', 'Ccl1', 'Cxcl13', 'Ccl11',  'Cxcl2', 'Tnfaip3', 'Socs3', 'Peli1', 'Nos2', 'Marco')
+DefaultAssay(mg) = 'RNA'
+m1panelPlot = DotPlot(object = mg, features = m1panel) + 
+  labs(title = 'Microglia subtypes: M1 macrophage gene panel') +
+  scale_radius(limits = c(0,100),
+               range = c(0,5)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 65, size = 12, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_blank(),
+        legend.position = 'bottom', 
+        legend.direction = 'horizontal',
+        legend.text = element_text(size = 12)) +
+  guides(color = guide_colorbar(ticks.colour = 'black',
+                                frame.colour = 'black',
+                                title = 'Average scaled\nexpression',
+                                title.position = 'top',
+                                title.hjust = 0.5),
+         size = guide_legend(title.position = 'top',
+                             title = 'Percent expression',
+                             title.hjust = 0.5))
+ggsave(filename = paste0(results_out, 'm1-macrophage-microglia-subtype-expression-dotplot.tiff'), plot = m1panelPlot, device = 'tiff', height = 3.25, width = 6.25, dpi = 320)
+m1panelPlot
+```
+
+We observed that, while not all were detected, M1 macrophage-associated genes were primarily expressed by Activated, Development-associated, and Disease-associated microglia. 
+
+```{r}
+#| fig.height: 3.25
+#| fig.width: 6.25
+#| fig.cap: Dot plot of M1 macrophage-associated gene expression in SVZ microglia sub-types.
+m1panel = c('Il1a', 'Il1b', 'Il6', 'Il12a', 'Il12b', 'Il23a', 'Il27', 'Tnf', 'Csf3', 'Csf2', 'Nfkbiz', 'Ccl1', 'Cxcl13', 'Ccl11',  'Cxcl2', 'Tnfaip3', 'Socs3', 'Peli1', 'Nos2', 'Marco')
+DefaultAssay(mg) = 'RNA'
+m1panelTimePlot = DotPlot(object = mg, features = m1panel, group.by = 'orig.ident') + 
+  labs(title = 'Microglia injury-timepoint: M1 macrophage gene panel') +
+  scale_radius(limits = c(0,100),
+               range = c(0,5)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 65, size = 12, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_blank(),
+        legend.position = 'bottom', 
+        legend.direction = 'horizontal',
+        legend.text = element_text(size = 10)) +
+  guides(color = guide_colorbar(ticks.colour = 'black',
+                                frame.colour = 'black',
+                                title = 'Average scaled\nexpression',
+                                title.position = 'top',
+                                title.hjust = 0.5),
+         size = guide_legend(title.position = 'top',
+                             title = 'Percent expression',
+                             title.hjust = 0.5))
+ggsave(filename = paste0(results_out, 'm1-macrophage-microglia-injury-time-expression-dotplot.tiff'), plot = m1panelTimePlot, device = 'tiff', height = 3.25, width = 5.5, dpi = 320)
+m1panelTimePlot
+```
+
+We also observed that M1 macrophage-associated genes are detected primarily at 1 day post-injury i.e. S1d. 
+
+```{r}
+#| fig.height: 3.25
+#| fig.width: 6.25
+#| fig.cap: Dot plot of M1 macrophage-associated gene expression in SVZ microglia sub-types.
+m2panel = c('Retnla', 'Clec10a', 'Ccl17', 'Ccl24', 'Irf4', 'Chil3', 'Mrc1', 'Arg1', 'Rnase2a', 'Ear2', 'Ccl8', 'Mela', 'Clec7a', 'Pdcd1lg2', 'Socs2', 'Cdh1', 'Ppard', 'Pparg', 'Ccl22')
+DefaultAssay(mg) = 'RNA'
+m2panelPlot = DotPlot(object = mg, features = m2panel) + 
+  labs(title = 'Microglia subtypes: M2 macrophage gene panel') +
+  scale_radius(limits = c(0,100),
+               range = c(0,5)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 65, size = 12, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_blank(),
+        legend.position = 'bottom', 
+        legend.direction = 'horizontal',
+        legend.text = element_text(size = 10)) +
+  guides(color = guide_colorbar(ticks.colour = 'black',
+                                frame.colour = 'black',
+                                title = 'Average scaled\nexpression',
+                                title.position = 'top',
+                                title.hjust = 0.5),
+         size = guide_legend(title.position = 'top',
+                             title = 'Percent expression',
+                             title.hjust = 0.5))
+ggsave(filename = paste0(results_out, 'm2-macrophage-microglia-subtype-expression-dotplot.tiff'), plot = m2panelPlot, device = 'tiff', height = 3.25, width = 6.25, dpi = 320)
+m2panelPlot
+```
+
+We found few M2 macrophage-associated genes expressed by microglia.
+
+```{r}
+#| fig.height: 3.25
+#| fig.width: 6.25
+#| fig.cap: Dot plot of M1 macrophage-associated gene expression in SVZ microglia sub-types.
+m2panel = c('Retnla', 'Clec10a', 'Ccl17', 'Ccl24', 'Irf4', 'Chil3', 'Mrc1', 'Arg1', 'Rnase2a', 'Ear2', 'Ccl8', 'Mela', 'Clec7a', 'Pdcd1lg2', 'Socs2', 'Cdh1', 'Ppard', 'Pparg', 'Ccl22')
+DefaultAssay(mg) = 'RNA'
+m2panelTimePlot = DotPlot(object = mg, features = m2panel, group.by = 'orig.ident') + 
+  labs(title = 'Microglia subtypes: M2 macrophage gene panel') +
+  scale_radius(limits = c(0,100),
+               range = c(0,5)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 65, size = 12, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_blank(),
+        legend.position = 'bottom', 
+        legend.direction = 'horizontal',
+        legend.text = element_text(size = 10)) +
+  guides(color = guide_colorbar(ticks.colour = 'black',
+                                frame.colour = 'black',
+                                title = 'Average scaled\nexpression',
+                                title.position = 'top',
+                                title.hjust = 0.5),
+         size = guide_legend(title.position = 'top',
+                             title = 'Percent expression',
+                             title.hjust = 0.5))
+ggsave(filename = paste0(results_out, 'm2-macrophage-microglia-time-expression-dotplot.tiff'), plot = m2panelTimePlot, device = 'tiff', height = 3.25, width = 6.25, dpi = 320)
+m2panelTimePlot
+```
+
+Expression of M2 macrophage-associated genes did not show injury-dependent changes.
+
+Overall, we conclude that, while microglia show subtype-specific and injury-dependent expression of M1 macrophage genes, expression was not exclusive to a single subtype and was instead heterogeneous. 
+
+> Comment 5. Did the authors detect the presence of neural RNA fragments inside of microglia indicating phagocytosis?
+
+We detected few neural RNA fragments, such as transcripts for genes encoding *Dcx* and *Ascl1*, inside of microglia. To test whether microglia phagocytosis could explain this presence, we first identified genes differentially expressed in neural cells over microglia and subsequently tested for differential expression of these genes across injury time-points in microglia. 
+
+```{r}
+#| fig.height: 3
+#| fig.width: 5.5
+#| fig.cap: Violin plot of neural genes Ascl1 and Dcx expression across celltypes and injury time-points. 
+p.svz.neuralGenes = VlnPlot(svz, features = c('Ascl1','Dcx'), group.by = 'celltype', split.by = 'orig.ident', slot = 'count') & theme(axis.title.x = element_blank()) & scale_y_continuous(breaks = scales::pretty_breaks()) & ylab(label = 'UMI count')
+ggsave(filename = paste0(results_out, 'neural-gene-expression-celltype-injury-time.tiff'), plot = p.svz.neuralGenes, height = 3, width = 5.5, dpi = 320, device = 'tiff')
+p.svz.neuralGenes
+```
+
+The violin plot shows that neural transcripts are most abundant in NSCs, detected at low frequencies in microglia, and virtually undetected in the Unknown/ependymal populations. 
+
+```{r}
+#| fig.height: 6
+#| fig.width: 6
+p.time = VlnPlot(mg, features = c('Ascl1','Dcx'), group.by = 'orig.ident', slot = 'count') &
+  ylab(label = 'UMI count') &
+  theme(axis.title.x = element_blank()) & 
+  scale_y_continuous(breaks = scales::pretty_breaks())
+p.subtype = VlnPlot(mg, features = c('Ascl1','Dcx'), group.by = 'subtype', slot = 'count') &
+  ylab(label = 'UMI count') &
+  theme(axis.title.x = element_blank()) & 
+  scale_y_continuous(breaks = scales::pretty_breaks())
+p.mg = p.time / p.subtype
+ggsave(filename = paste0(results_out, 'microglia-neural-fragments-subtype-injury-time.tiff'), plot = p.mg, device = 'tiff', height = 6, width = 6, dpi = 320)
+```
+
+The violin plots demonstrate that there is little evidence of injury-dependent changes in neural transcript detection in microglia. However, there appears to be a trend where neural transcripts are enriched in homeostatic microglia. We tested for differential expression of these genes as well as neural transcripts that are enriched in NSCs over microglia.
+
+```{r}
+neuralGenes = FindMarkers(
+  object = svz,
+  group.by = 'celltype',
+  ident.1 = 'NSPC',
+  ident.2 = 'Microglia',
+  only.pos = TRUE
+)
+topNeuralGenes = neuralGenes %>% 
+  top_n(n = 20, wt = -p_val_adj) %>% 
+  top_n(n = 20, wt = avg_log2FC) %>% 
+  rownames()
+Idents(svz) = 'celltype'
+neuralFragments = FindMarkers(
+  object = svz,
+  subset.ident = 'Microglia',
+  group.by = 'orig.ident',
+  ident.1 = 'SCtrl',
+  features = topNeuralGenes
+)
+DT::datatable(data = neuralFragments)
+```
+
+Differential expression test results show that only 1 of the 10 top neural transcripts are differentially expressed in microglia across injury time-points. These data suggest that neural RNA fragments inside of microglia likely do not indicate phagocytosis. 
+
+```{r}
+Idents(mg) = 'subtype'
+neuralMGFragments = FindAllMarkers(
+  object = mg,
+  only.pos = TRUE,
+  features = topNeuralGenes
+)
+DT::datatable(data = neuralMGFragments)
+```
+
+
+> Comment 6. Did any of these cells express Hoxb8, CCR2, or other potential cannonical markers of additional microglia progenitors? The authors subsequently demonstrate using HexB-tdTomato mice, that many Hexb cells do not express Iba1. Further, they demonstrate that the percentage of Cx3cr1-CRE-ERT2 derived and Iba1 double labeled cells is quite significant and that this increases after PT.
+
+```{r}
+#| fig.height: 3.5
+#| fig.width: 7
+DefaultAssay(svz) = 'RNA'
+p.mg.progenitors = DotPlot(svz, group.by = 'subtype', features = c('Ms4a7', 'Ccr2', 'Hoxb8', 'Mrc1', 'Lyve1', 'Spp1', 'Pf4', 'Cx3cr1', 'Hexb', 'Aif1')) + 
+  labs(title = 'Microglia progenitor genes') +
+  scale_radius(limits = c(0,100),
+               range = c(0,5)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 65, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_blank(),
+        legend.box = 'horizontal') +
+  guides(color = guide_colorbar(ticks.colour = 'black',
+                                frame.colour = 'black',
+                                title = 'Average\nscaled\nexpression',
+                                title.position = 'top'),
+         size = guide_legend(title.position = 'top',
+                             title = 'Percent\nexpression'))
+p.mg.progenitors
+ggsave(filename = paste0(results_out, 'microglia-progenitor-genes.tiff'), plot = p.mg.progenitors, device = 'tiff', height = 3.5, width = 7)
+```
+
+Expression of genes associated with embryonic/progenitor-like microglia are low. The evidence is inconclusive whether any of these microglia subtypes are progenitor-like microglia.
+
+> Comment 7. Are these microglia progenitors?
+
+It is inconclusive whether these are microglia progenitors based on scRNAseq data.
+
+
+### Reviewer #2 (Remarks to the Author):
+
+> It supports the authors hypothesis concerning the origin of recruited microglia that Ccr2-RFP cells after cortical infarction were not recruited. However, CD45 immunostaining would also be suggested to assess the presence of leukocytes in the SVZ. Note that only a subset monocytes would express Cc2r among those recruited into the brain. In particular, the phenotype of Iba1-negative microglia and their origin could be interesting to further elaborate upon. Would these microglia have higher CD45 levels, and/or would these show proliferative activity?
+
+```{r}
+#| fig.height: 5
+#| fig.width: 12
+DefaultAssay(mg) = 'RNA'
+genes = c('Ccr2','Itgam','Ptprc','Aif1','Hexb','Cx3cr1', 'Mki67', 'Top2a')
+plots = vector(mode = 'list', length = length(genes))
+names(plots) = genes
+for (g in 1:length(genes)) {
+  plots[[g]] = FeaturePlot(mg, features = genes[g], order = TRUE, pt.size = 1.5) +
+    theme(axis.text = element_blank(),
+          axis.ticks = element_blank()) +
+    guides(color = guide_colorbar(ticks.colour = 'black',
+                                  frame.colour = 'black'))
+}
+plots.panel = cowplot::plot_grid(plotlist = plots, ncol = 4)
+ggsave(filename = paste0(results_out, 'microglia-recruited-macrophage-origin-genes-featureplot.tiff'), plot = plots.panel, device = 'tiff', height = 5, width = 12, dpi = 320)
+plots.panel
+```
+
+```{r}
+#| fig.height: 2.75
+#| fig.width: 6.5
+p.origins = DotPlot(mg, features = genes) + 
+  scale_radius(limits = c(0,100),
+               range = c(0,5)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 65, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_blank(),
+        plot.title = element_blank(),
+        legend.box = 'horizontal') +
+  guides(color = guide_colorbar(ticks.colour = 'black',
+                                frame.colour = 'black',
+                                title = 'Average\nscaled\nexpression',
+                                title.position = 'top'),
+         size = guide_legend(title.position = 'top',
+                             title = 'Percent\nexpression'))
+ggsave(filename = paste0(results_out, 'microglia-recruited-macrophage-origin-genes-dotplot.tiff'), plot = p.origins, device = 'tiff', height = 2.75, width = 6.5, dpi = 320)
+```
+
+
+### Reviewer #3 (Remarks to the Author):
+
+> In addition, the quality of the data is worrisome, since in suppl. figure 2 a very high % of mitochondrial genes are shown, suggesting that sequenced cells might be apoptotic/cell death.
+
+We agree with the reviewer that the mitochondrial content of the data is high compared to what is typically found scRNAseq datasets, especially compared to data from droplet-based methods. However, we believe our data to be of sufficiently good quality to support the claims in the manuscript for several reasons. First, we found that mitochondrial content is not a distinguishing feature of any of the NSPC or microglia clusters, nor were mitochondrial genes  among the highest ranked DEGs except for Activated B Cells. In analyses where low quality cells are not removed, distinct clusters with low numbers of unique genes detected, low numbers of UMIs detected, high mitochondrial content, or a combination of the three, are often identified through clustering algorithms. This was not the case with our data. Second, we performed an integrated analysis by combining our data with the data published by Zywitza et al. 2018 (https://doi.org/10.1016/j.celrep.2018.11.003) in which the authors similarly studied cells of the subventricular zone. Our analysis showed that shared cell-types can successfully be identified between the two studies despite difference in mitochondrial content. Furthermore, we also observed shifts in the distribution of microglia across injury time-points in the combined UMAP which is in agreement with the observed subtype proportional changes in our study. These results together demonstrate that the utility of our dataset in generating cross-study analyses is not hindered by the elevated mitochondrial content. Third, our decision to set a more lenient mitochondrial threshold (in our case, 25%) is not unique and has been used in previous studies analyzing neural stem cell niches or other CNS tissues (https://doi.org/10.7554/eLife.59733; https://doi.org/10.1016/j.celrep.2022.110440). Furthermore, it has been demonstrated that mitochondrial content varies in a cell type-dependent manner and than CNS tissues rank among the highest average mitochondrial content (https://doi.org/10.1093/bioinformatics/btaa751). In agreement with these findings, when we examined the mitochondrial content of our data by cell-type, we observed that NSPCs displayed a higher average mitochondrial content than microglia. 
+
+```{r}
+svz = readRDS(file = 'data/svz.rds')
+svz$celltype = plyr::mapvalues(
+  x = svz$celltype,
+  from = 'NSC',
+  to = 'NSPC'
+)
+p.mito = VlnPlot(svz, features = 'percent.mt', group.by = 'celltype', split.by = 'orig.ident') +
+  labs(title = 'Mitochondrial percentage') +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 12, angle = 65, hjust = 1),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_blank(),
+        legend.text = element_text(size = 12))
+ggsave(filename = paste0(results_out, 'mitochondrial-percentage-celltype-injury-time-point.tiff'), plot = p.mito, height = 4, width = 5.5, dpi = 320, device = 'tiff')
+
+FeaturePlot(svz, features = c('Casp1', 'Bcl2'), pt.size = 2, order = TRUE)
+svz@meta.data %>% 
+  ggplot(mapping = aes(x = nCount_RNA, y = nFeature_RNA)) + 
+  geom_point(mapping = aes(color = subtype)) +
+  scale_x_continuous(trans = 'log1p', breaks = c(1000, 5000, 1e4, 2e4, 3e4)) +
+  theme_bw()
+```
+
+
+```{r}
+sets = read.table(file = 'ref/Single cell studies database - Data.tsv', sep = '\t', header = TRUE, fill = TRUE)
+head(sets)
+dim(sets)
+colnames(sets)
+refSets = sets %>% 
+  # count(Technique) %>% 
+  # arrange(n) %>% 
+  mutate(Technique = trimws(Technique)) %>% 
+  filter(grepl('CEL', Technique)) %>% 
+  select(Title,Authors,Technique,Tissue,Organism,DOI) %>% 
+  filter(grepl(pattern = 'brain', x = Tissue, ignore.case = TRUE),
+         grepl(pattern = 'mouse', x = Organism, ignore.case = TRUE))
+refSets = sets %>% 
+  # count(Technique) %>% 
+  # arrange(n) %>% 
+  mutate(Technique = trimws(Technique)) %>% 
+  # filter(grepl('CEL', Technique)) %>% 
+  filter(grepl(pattern = 'brain', x = Tissue, ignore.case = TRUE),
+         grepl(pattern = 'mouse', x = Organism, ignore.case = TRUE)) %>% 
+  select(Title,Authors,Technique,Tissue,Organism,DOI,Date)
+DT::datatable(refSets)
+```
+
+
+Of the publications listed, candidate studies with CELseq platform, in mouse, in brain, and contain microglia:
+
+1. Tay et al. Unique microglia recovery population revealed by single-cell RNAseq following neurodegeneration. [DOI:10.1186/s40478-018-0584-3](https://doi.org/10.1186/s40478-018-0584-3).
+1. Masuda et al. Spatial and temporal heterogeneity of mouse and human microglia at single-cell resolution. (DOI:10.1038/s41586-019-0924-x)[https://doi.org/10.1038/s41586-019-0924-x]
+
+It's worth noting that in both of these publications, Marco Prinz is the corresponding author. In neither publication, the percent of reads mapping to mitochondrial genes is not reported either. 
+
+
+#### Inspection of data from Tay et al.
+
+Data from Tay et al. is available here: [https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE90975](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE90975).
+
+Download `GSE90975_RAW.tar` from the `http` link` at the bottom of the page and decompress the file.
+
+```{r}
+# untar(tarfile = 'ref/tay-et-al_GSE90975_RAW.tar')
+tayCounts = list.files(path = 'ref/tay-et-al_GSE90975_RAW/', full.names = TRUE)
+tayCounts = lapply(
+  X = tayCounts,
+  FUN = function(x) {
+    y = read.table(gzfile(x), header = TRUE, row.names = 1)
+    return(y)
+  }
+)
+# count matrix contains non-integer values (remnants of read alignment/data processing) that need to be truncated. similar readout was observed in original Nath et al dataset.
+tayCounts = lapply(
+  X = tayCounts,
+  FUN = function(x) {
+    x = apply(X = x, FUN = round, digits = 0, MARGIN = 2)
+    return(x)
+  }
+)
+genes = lapply(X = tayCounts, FUN = rownames)
+mtGenes = lapply(
+  X = genes, 
+  FUN = function(x) grep(pattern = '^mt-', x = x, value = TRUE, ignore.case = TRUE)
+)
+# mtGenes = lapply(
+#   X = genes, 
+#   FUN = function(x) grep(pattern = 'mt', x = x, value = TRUE, ignore.case = TRUE)
+# )
+mtGenes
+```
+
+Upon examining the genes in each of the `r length(tayCounts)` plates, genes that start with "mt-" are not present - i.e. no measurement values are present for mitochondrial genes. The dataset only quantified genes within the mouse genome that are not mitochondrial. We cannot use this dataset to compare percentage of reads mapping to mitochondrial transcripts.
+
+
+#### Inspection of data from Masuda et al. 
+
+
+Data from Tay et al. is available here: [https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE120629](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE120629).
+
+Download `GSE120629_geo_submission_counts.csv.gz` from the `http` link` at the bottom of the page and decompress the file.
+
+
+```{r}
+masCounts = read.csv(gzfile(description = 'ref/GSE120629_geo_submission_counts.csv.gz'), row.names = 1)
+grep('Mt', rownames(masCounts), value = TRUE)
+```
+
+Not even the data from Masuda et al. contains count data for mitochondrial genes...
+
+
+#### Inspection of data from Li et al. 
+
+
+```{r}
+li = read.csv(file = 'ref/GSE123022_C57BL6J_TREM2KO_369_Microglia_processed_data.csv.gz', row.names = 1)
+# dim(li)
+# rownames(li)
+# colnames(li)
+grep('^mt', rownames(li), value = TRUE, ignore.case = TRUE)
+```
+
+
+From this brief inspection of publicly available data on cells from brains and microglia, there is no reference against which we can compare mitochondrial percentage. Therefore, we need to justify the elevated expression of mitochondrial transcripts in the data in Nath et al.
+
+
+> The text and figure captions mention that scRNAseq data has been visualized using Diffusion maps, but the figures show UMAP coordinate systems while the methods don’t mention diffusion maps. Please clarify what method was used where.
+
+UMAPs were used throughout the entire study. Diffusion maps were not used. This has been corrected in the manuscript.
+
+> Figure 2: the % of mitochondrial genes is very very high, suggesting that sequenced cells might be apoptotic/cell death.
+
+See investigation above.
+
+
+
+#### Inspection of data from Keren-Shaul et al. 2017. 
+
+Paper: Keren-Shaul H, Spinrad A, Weiner A, Matcovitch-Natan O, Dvir-Szternfeld R, Ulland TK, David E, Baruch K, Lara-Astaiso D, Toth B, Itzkovitz S, Colonna M, Schwartz M, Amit I. A Unique Microglia Type Associated with Restricting Development of Alzheimer's Disease. Cell. 2017 Jun 15;169(7):1276-1290.e17. doi: 10.1016/j.cell.2017.05.018. Epub 2017 Jun 8. PMID: 28602351.
+
+Link: http://doi.org/10.1016/j.cell.2017.05.018
+
+```{r}
+kerenCountsPath = list.files(path = 'ref/GSE98969_RAW/', full.names = TRUE, pattern = '\\.txt', recursive = TRUE)
+kerenCounts = vector(mode = 'list', length = length(kerenCountsPath))
+for (i in 1:length(kerenCountsPath)) {
+  kerenCounts[[i]] = read.table(kerenCountsPath[i], header = TRUE, row.names = 1)
+}
+kerenCounts = Reduce(f = cbind, x = kerenCounts)
+kerenCounts = Matrix::Matrix(data = as.matrix(kerenCounts), sparse = TRUE)
+saveRDS(kerenCounts, file = 'ref/GSE98969_RAW_counts.rds')
+```
+
+```{r}
+expDesign = read.table(file = 'ref/GSE98969_experimental_design_f.txt/GSE98969_experimental_design_f.txt', sep = '\t', fill = TRUE, skip = 16, header = TRUE)
+head(expDesign, 20)
+unique(expDesign$Mouse_ID)
+unique(expDesign$Batch_desc)
+```
+
+```{r}
+kerenCounts = readRDS(file = 'ref/GSE98969_RAW_counts.rds')
+kerenCounts = CreateSeuratObject(counts = kerenCounts)
+kerenCounts = kerenCounts %>% 
+  NormalizeData() %>% 
+  FindVariableFeatures() %>% 
+  ScaleData() %>% 
+  RunPCA()
+ElbowPlot(kerenCounts, ndims = 40)
+kerenCounts = kerenCounts %>% 
+  FindNeighbors(dims = 1:15) %>% 
+  FindClusters() %>% 
+  RunUMAP(dims = 1:15)
+kerenCounts = PercentageFeatureSet(kerenCounts, pattern = '^mt-', col.name = 'percent_mt')
+DimPlot(kerenCounts, label = TRUE, label.size = 5, shuffle = TRUE)
+VlnPlot(kerenCounts, features = c('nCount_RNA', 'percent_mt'), pt.size = 0)
+```
+
+Although mitochondrial gene names are present in the count matrix, all mitochondrial genes have zero values for every cell. 
+
+
+#### Inspection of data from Geirsdottir et al. 2019. 
+
+Paper: Geirsdottir L, David E, Keren-Shaul H, Weiner A, Bohlen SC, Neuber J, Balic A, Giladi A, Sheban F, Dutertre CA, Pfeifle C, Peri F, Raffo-Romero A, Vizioli J, Matiasek K, Scheiwe C, Meckel S, Mätz-Rensing K, van der Meer F, Thormodsson FR, Stadelmann C, Zilkha N, Kimchi T, Ginhoux F, Ulitsky I, Erny D, Amit I, Prinz M. Cross-Species Single-Cell Analysis Reveals Divergence of the Primate Microglia Program. Cell. 2019 Dec 12;179(7):1609-1622.e16. doi: 10.1016/j.cell.2019.11.010. Erratum in: Cell. 2020 Apr 30;181(3):746. PMID: 31835035.
+
+Link: https://doi.org/10.1016/j.cell.2019.11.010 
+
+```{r}
+expDesign = read.table(file = 'ref/GSE134705_metadata_t.txt/GSE134705_metadata_t.txt', header = TRUE, fill = TRUE, sep = '\t', row.names = 1)
+head(expDesign, 20)
+table(expDesign$species)
+mousePlates = unique(expDesign$Amp_batch_ID[which(expDesign$species %in% c('Mouse'))])
+```
+
+```{r}
+geCountsPath = list.files(path = 'ref/GSE134705_RAW/', full.names = TRUE, pattern = '\\.txt', recursive = TRUE)
+geCountsPath = grep(pattern = paste(mousePlates, collapse = '|'), x = geCountsPath, value = TRUE)
+geCounts = vector(mode = 'list', length = length(geCountsPath))
+for (i in 1:length(geCountsPath)) {
+  geCounts[[i]] = read.table(geCountsPath[i], header = TRUE, row.names = 1, fill = TRUE)
+}
+geCounts = Reduce(f = cbind, x = geCounts)
+geCounts = Matrix::Matrix(data = as.matrix(geCounts), sparse = TRUE)
+saveRDS(geCounts, file = 'ref/GSE134705_RAW_counts.rds')
+```
+
+```{r}
+geCounts = readRDS(file = 'ref/GSE134705_RAW_counts.rds')
+geCounts = CreateSeuratObject(counts = geCounts)
+geCounts$amp_batch = plyr::mapvalues(
+  x = rownames(geCounts@meta.data),
+  from = expDesign$Well_ID,
+  to = expDesign$Amp_batch_ID,
+  warn_missing = FALSE
+)
+geCounts = geCounts %>% 
+  NormalizeData() %>% 
+  FindVariableFeatures() %>% 
+  ScaleData() %>% 
+  RunPCA()
+ElbowPlot(geCounts, ndims = 40)
+geCounts = geCounts %>% 
+  FindNeighbors(dims = 1:15) %>% 
+  FindClusters() %>% 
+  RunUMAP(dims = 1:15)
+geCounts = PercentageFeatureSet(geCounts, pattern = '^mt-', col.name = 'percent_mt')
+```
+
+```{r}
+geMito = VlnPlot(geCounts, features = c('percent_mt'), pt.size = 0, group.by = 'amp_batch') +
+  labs(title = 'Microglia % mitochondrial genes',
+       subtitle = 'Data source: Geirsdottir et al. 2019\nDOI:10.1016/j.cell.2019.11.010') +
+  xlab(label = 'Sequencing batch') +
+  scale_y_continuous(breaks = seq(0, 100, 10)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 65, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 12),
+        legend.position = 'none')
+ggsave(filename = paste0(results_out, 'microglia-mitochondrial-percent_Geirsdottir-et-al-2019.tiff'), plot = geMito, device = 'tiff', height = 4, width = 4.5, dpi = 320)
+```
+
+
+#### Inspection of data from Li et al. 2018
+
+Paper: Li Q, Cheng Z, Zhou L, Darmanis S, Neff NF, Okamoto J, Gulati G, Bennett ML, Sun LO, Clarke LE, Marschallinger J, Yu G, Quake SR, Wyss-Coray T, Barres BA. Developmental Heterogeneity of Microglia and Brain Myeloid Cells Revealed by Deep Single-Cell RNA Sequencing. Neuron. 2019 Jan 16;101(2):207-223.e10. doi: 10.1016/j.neuron.2018.12.006. Epub 2018 Dec 31. PMID: 30606613; PMCID: PMC6336504.
+
+```{r}
+liCounts = read.csv(file = 'ref/GSE123022_C57BL6J_TREM2KO_369_Microglia_processed_data.csv/GSE123022_C57BL6J_TREM2KO_369_Microglia_processed_data.csv', header = TRUE, row.names = 1)
+grep(pattern = '^mt-', ignore.case = TRUE, x = rownames(liCounts), value = TRUE)
+```
+
+
+#### Inspection of data from Rosenberg et al. 2019
+
+Paper: Rosenberg AB, Roco CM, Muscat RA, Kuchina A, Sample P, Yao Z, Graybuck LT, Peeler DJ, Mukherjee S, Chen W, Pun SH, Sellers DL, Tasic B, Seelig G. Single-cell profiling of the developing mouse brain and spinal cord with split-pool barcoding. Science. 2018 Apr 13;360(6385):176-182. doi: 10.1126/science.aam8999. Epub 2018 Mar 15. PMID: 29545511; PMCID: PMC7643870.
+
+
+```{r}
+rosenData = R.matlab::readMat(con = 'ref/GSE110823_RAW/GSM3017261_150000_CNS_nuclei.mat/GSM3017261_150000_CNS_nuclei.mat')
+rosenCounts = rosenData$DGE
+rownames(rosenCounts) = rosenData$barcodes
+colnames(rosenCounts) = trimws(rosenData$genes)
+grep('^mt-', ignore.case = TRUE, x = colnames(rosenCounts), value = TRUE)
+```
+
+
+#### Inspection of data from Basak et al. 2018
+
+Paper: Basak O, Krieger TG, Muraro MJ, Wiebrands K, Stange DE, Frias-Aldeguer J, Rivron NC, van de Wetering M, van Es JH, van Oudenaarden A, Simons BD, Clevers H. Troy+ brain stem cells cycle through quiescence and regulate their number by sensing niche occupancy. Proc Natl Acad Sci U S A. 2018 Jan 23;115(4):E610-E619. doi: 10.1073/pnas.1715911114. Epub 2018 Jan 8. PMID: 29311336; PMCID: PMC5789932.
+
+```{r}
+basCountsPath = list.files(path = 'ref/GSE65970_RAW/', pattern = 'GSM2912602|GSM2912603|GSM2912604|GSM2912605', recursive = TRUE, full.names = TRUE)
+basCounts = lapply(basCountsPath, FUN = read.table, header = TRUE, row.names = 1, sep = '\t')
+for (i in 1:length(basCounts)) {
+  basCounts[[i]] = round(basCounts[[i]], digits = 0)
+}
+genes = sapply(basCounts, rownames)
+genes = Reduce(f = base::union, x = genes)
+grep('^mt-', x = genes, ignore.case = TRUE, value = TRUE)
+```
+
+
+#### Inspection of data from Zywitza et al. 2018
+
+Paper: Zywitza V, Misios A, Bunatyan L, Willnow TE, Rajewsky N. Single-Cell Transcriptomics Characterizes Cell Types in the Subventricular Zone and Uncovers Molecular Defects Impairing Adult Neurogenesis. Cell Rep. 2018 Nov 27;25(9):2457-2469.e8. doi: 10.1016/j.celrep.2018.11.003. PMID: 30485812.
+
+
+```{r}
+zywitza_counts <- 'ref/GSE111527_RAW_Zywitza2018/'
+batches <- list.files(path = 'ref/GSE111527_RAW_Zywitza2018/')
+batches <- batches[!grepl('KO|WT', batches)]
+# Load data from WT animals.
+dat <- vector(mode = 'list', length = length(batches))
+names(dat) <- batches
+for (i in 1:length(batches)) {
+  tmp <- read.table(
+    file = gzfile(
+      description = paste0(zywitza_counts, batches[i]),
+      open = 'rt',
+    ),
+    header = TRUE,
+    row.names = 1
+  )
+  dat[[batches[i]]] <- Matrix::Matrix(data = as.matrix(tmp),
+                                      sparse = TRUE)
+  message(paste('Loading file', batches[i], '...'))
+}
+shared_genes <- lapply(
+  X = dat, 
+  FUN = rownames
+)
+shared_genes <- Reduce(intersect, shared_genes)
+zyw <- lapply(
+  X = dat,
+  FUN = function(x) {
+    x[rownames(x) %in% shared_genes,]
+  }
+)
+for (i in 1:length(zyw)) {
+  tmp <- sapply(
+    X = strsplit(x = names(zyw)[i], split = '_'),
+    FUN = `[`, 
+    1
+  )
+  colnames(zyw[[i]]) <- paste(colnames(zyw[[i]]), tmp, sep = '_')
+}
+zyw <- Reduce(f = cbind, x = zyw)
+zyw <- zyw %>% 
+  CreateSeuratObject(project ='Zywitza') %>% 
+  NormalizeData() %>% 
+  FindVariableFeatures(nfeatures = 2000) %>% 
+  ScaleData() %>% 
+  RunPCA() %>% 
+  FindNeighbors(dims = 1:10) %>% 
+  FindClusters(resolution = 0.4) %>% 
+  RunUMAP(dims = 1:10)
+zyw = PercentageFeatureSet(zyw, pattern = '^mt-', col.name = 'percent_mt')
+VlnPlot(zyw, features = c('percent_mt','Ascl1','P2ry12'), pt.size = 0) +
+  scale_y_continuous(breaks = seq(0, 100, 10))
+
+# percent mito is very low, almost less than 10% across almost all clusters
+```
+
+
+
+#### Inspection of data from Magnusson et al. 2020
+
+Paper: Magnusson JP, Zamboni M, Santopolo G, Mold JE, Barrientos-Somarribas M, Talavera-Lopez C, Andersson B, Frisén J. Activation of a neural stem cell transcriptional program in parenchymal astrocytes. Elife. 2020 Aug 3;9:e59733. doi: 10.7554/eLife.59733. PMID: 32744501; PMCID: PMC7440914.
+
+```{r}
+magCounts = read.csv(file = 'ref/GSE153916_RAW/GSM4658401_gex_allcells.csv/GSM4658401_gex_allcells.csv', row.names = 1, header = TRUE)
+grep(pattern = '^mt-', x = rownames(magCounts), value = TRUE, ignore.case = TRUE)
+magCounts = CreateSeuratObject(counts = magCounts)
+magCounts = magCounts %>% 
+  NormalizeData() %>% 
+  FindVariableFeatures() %>% 
+  ScaleData() %>% 
+  RunPCA()
+ElbowPlot(magCounts, ndims = 40)
+magCounts = magCounts %>% 
+  FindNeighbors(dims = 1:15) %>% 
+  FindClusters(resolution = 0.4) %>% 
+  RunUMAP(dims = 1:15)
+magCounts = PercentageFeatureSet(magCounts, pattern = '^mt-', col.name = 'percent_mt')
+p.umap = DimPlot(magCounts, label = TRUE, label.size = 6, shuffle = TRUE)
+p.vln = VlnPlot(magCounts, features = c('Ascl1','P2ry12','Gfap','percent_mt'), pt.size = 0, ncol = 2)
+p.dot = DotPlot(magCounts, features = c('Ascl1', 'Dcx', 'Mki67', 'Gfap','Mog','Cx3cr1'))
+(p.umap / p.dot) | p.vln
+
+```
+
