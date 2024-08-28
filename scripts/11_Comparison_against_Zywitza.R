@@ -1,18 +1,21 @@
-
 # Integrated analysis with Zywitza SVZ scSeq ---------------------------------
 
 #' ## Comparative analysis with SVZ data produced by Zywitza, 2018.  
 #' 
 
-svz <- readRDS(file = '../data/20210108_SVZ.rds')
+results_out = 'results/11_Comparison_against_Zywitza/'
+dir.create(path = results_out)
+
+svz <- readRDS(file = 'data/svz.rds')
 DefaultAssay(svz) <- 'RNA'
+
 
 # Set file paths.
 # To download zywitza counts file:
 # 1. go here: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE111527
 # 2. at supplementary files at bottom, download GSE111527_RAW.tar
 # 3. unzip .tar file (should give you folder with .gz files)
-zywitza_counts <- '../ref/GSE111527_RAW_Zywitza2018/'
+zywitza_counts <- 'ref/GSE111527_RAW_Zywitza2018/'
 batches <- list.files(zywitza_counts)
 batches <- batches[!grepl('KO|WT', batches)]
 
@@ -108,32 +111,33 @@ svz$orig.ident <- factor(svz$orig.ident, levels = rev(c('SCtrl','S1d','S7d','Zyw
 DimPlot(svz, label = TRUE, label.size = 6, pt.size = 1) + theme_bw()
 
 #+ svz_markers, fig.height=3.5, fig.width=12, fig.cap='t-SNE of marker genes for microglia and NSPCs'
-FeaturePlot(svz, features = c('Cx3cr1','Ascl1','Top2a','Dcx'), order = TRUE, ncol = 4)
-# p1 <- FeaturePlot(svz, features = c('Cx3cr1','Ascl1','Top2a','Dcx'), order = TRUE, ncol = 4, combine = FALSE)
-# p1 <- lapply(p1, FUN = function(x) {x <- x + theme_bw() + NoLegend(); return(x)})
-# p1 <- cowplot::plot_grid(plotlist = p1, ncol = 4)
-# ggsave(filename = paste0(results_out, 'Zywitza_comparison_geneMarkers.svg'),
-#        plot = p1, device = 'svg', height = 3.25, width = 12)
+# FeaturePlot(svz, features = c('Cx3cr1','Ascl1','Top2a','Dcx'), order = TRUE, ncol = 4)
+p1 <- FeaturePlot(svz, features = c('Cx3cr1','Ascl1','Top2a','Dcx'), order = TRUE, ncol = 4, combine = FALSE)
+p1 <- lapply(p1, FUN = function(x) {x <- x + theme_bw() + NoLegend(); return(x)})
+p1 <- cowplot::plot_grid(plotlist = p1, ncol = 4)
+ggsave(filename = paste0(results_out, 'Zywitza_comparison_geneMarkers.tiff'),
+       plot = p1, device = 'tiff', height = 3.25, width = 12)
 
 
 #+ svz_tsne_byStudy, fig.height=3.5, fig.width=4.25, fig.cap='t-SNE of SVZ microglia (current study) and SVZ cells from Zywitza study. Cells are colored by study of origin or time after injury (current study's groups).'
-DimPlot(svz, group.by = 'orig.ident', pt.size = 1, order = TRUE) + theme_bw() +
-  scale_color_manual(values = c('Zywitza' = 'grey60',
-                                'SCtrl' = 'red',
-                                'S1d' = 'green',
-                                'S7d' = 'blue'))
-p1 <- DimPlot(svz, group.by = 'orig.ident', pt.size = 1, order = TRUE) +
+# DimPlot(svz, group.by = 'orig.ident', pt.size = 1, order = TRUE) + theme_bw() +
+#   scale_color_manual(values = c('Zywitza' = 'grey60',
+#                                 'SCtrl' = 'red',
+#                                 'S1d' = 'green',
+#                                 'S7d' = 'blue'))
+p2 <- DimPlot(svz, group.by = 'orig.ident', pt.size = 1, order = TRUE) +
   theme_bw() +
   scale_color_manual(values = c('Zywitza' = 'grey60',
                                 'SCtrl' = 'red',
                                 'S1d' = 'green',
-                                'S7d' = 'blue'))
-ggsave(filename = paste0(results_out, 'Zywitza_comparision_byGroup.svg'),
-       plot = p1, device = 'svg', height = 4.5, width = 6)
+                                'S7d' = 'blue')) +
+  theme(plot.title = element_blank(),)
+ggsave(filename = paste0(results_out, 'Zywitza_comparision_byGroup.tiff'),
+       plot = p2, device = 'tiff', height = 4.5, width = 5.75)
 
 #+ svz_tsne_byStudy, fig.height=3.5, fig.width=4.25, fig.cap='t-SNE of SVZ microglia (current study) and SVZ cells from Zywitza study. Colored cells denote cells from current and are colored by annotated cell-type.'
 DimPlot(svz, group.by = 'celltype', pt.size = 2, shuffle = TRUE) + theme_bw()
 
 #+ count_table, fig.cap='Mapping between cluster identites from combined analysis and original cell-type annotations (from current study).'
 knitr::kable(x = table(svz$celltype, svz$integrated_snn_res.0.4))
-saveRDS(svz, file = '../results/2021011MG_comparative_analysis/')
+
